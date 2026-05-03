@@ -80,6 +80,85 @@ def _poster_url(poster_path):
     return "https://image.tmdb.org/t/p/w500" + poster_path
 
 
+def _parse_rt_percent(s):
+    """RT scores arrive as strings like '99%' or '99'. Return float 0-100."""
+    if not s:
+        return 0.0
+    try:
+        return float(str(s).strip().rstrip("%"))
+    except ValueError:
+        return 0.0
+
+
+def _attach_ratings(li, movie, rating):
+    """Surface up to five ratings on the ListItem so the skin's info pane can
+    render them while the user scrolls. Uses Kodi's standard setRating() for
+    the four types Estuary and most third-party skins know about, plus
+    Rating.* properties (Seren/Fenlight convention) so skins that read
+    properties — and Filmarks, which has no standard rating type — still
+    display.
+
+    `movie` is the API's Movie dict (carries tmdb_vote_average); `rating` is
+    the per-row card-rating dict from /browse, /watchlist, /search etc.
+    `rating` may be None on TMDB-only search rows."""
+    rating = rating or {}
+
+    # IMDb (0-10) — also used as the default rating Kodi shows on row labels.
+    try:
+        imdb = float(rating.get("imdb_rating") or 0)
+    except (TypeError, ValueError):
+        imdb = 0.0
+    try:
+        imdb_votes = int(rating.get("imdb_vote_count") or 0)
+    except (TypeError, ValueError):
+        imdb_votes = 0
+    if imdb > 0:
+        li.setRating("imdb", imdb, imdb_votes, True)
+        li.setProperty("Rating.IMDb", "%.1f" % imdb)
+        if imdb_votes > 0:
+            li.setProperty("Votes.IMDb", str(imdb_votes))
+
+    # TMDB (0-10) — comes from movies table.
+    try:
+        tmdb = float(movie.get("tmdb_vote_average") or 0)
+    except (TypeError, ValueError):
+        tmdb = 0.0
+    try:
+        tmdb_votes = int(movie.get("tmdb_vote_count") or 0)
+    except (TypeError, ValueError):
+        tmdb_votes = 0
+    if tmdb > 0:
+        # Mark TMDB as default only if we don't have IMDb — gives the row a
+        # visible rating either way.
+        li.setRating("tmdb", tmdb, tmdb_votes, imdb <= 0)
+        li.setProperty("Rating.TMDb", "%.1f" % tmdb)
+
+    # Rotten Tomatoes (0-100; the "tomatoes" rating type is the meter score).
+    rt_pct = _parse_rt_percent(rating.get("rt_score"))
+    if rt_pct > 0:
+        li.setRating("tomatoes", rt_pct, 0, False)
+        li.setProperty("Rating.RT", "%d%%" % int(round(rt_pct)))
+
+    # Metacritic (0-100).
+    try:
+        mc = int(rating.get("metacritic") or 0)
+    except (TypeError, ValueError):
+        mc = 0
+    if mc > 0:
+        li.setRating("metacritic", float(mc), 0, False)
+        li.setProperty("Rating.Metacritic", str(mc))
+
+    # Filmarks: no standard Kodi rating type. Stored 0-5; surface 0-10 to
+    # match the web UI. Skins that read Rating.* properties (Seren/Fenlight
+    # style) can render this.
+    try:
+        fm = float(rating.get("filmarks_rating") or 0)
+    except (TypeError, ValueError):
+        fm = 0.0
+    if fm > 0:
+        li.setProperty("Rating.Filmarks", "%.1f" % (fm * 2.0))
+
+
 def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     title = movie.get("title", "")
     year = movie.get("year") or 0
@@ -101,12 +180,9 @@ def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     }
     if movie.get("imdb_id"):
         info["imdbnumber"] = movie["imdb_id"]
-    if rating:
-        if rating.get("imdb_rating"):
-            info["rating"] = float(rating["imdb_rating"])
-        if rating.get("imdb_vote_count"):
-            info["votes"] = str(rating["imdb_vote_count"])
     li.setInfo("video", info)
+
+    _attach_ratings(li, movie, rating)
     return li
 
 
@@ -665,83 +741,6 @@ def _quality_rank(q):
     return {"4K": 1, "1080p": 2, "720p": 3}.get(q, 4)
 
 
-_RATING_ICON_PATH = "special://home/addons/plugin.video.movierec/resources/media/"
-
-
-def _format_imdb_votes(votes):
-    try:
-        v = int(votes or 0)
-    except (TypeError, ValueError):
-        return ""
-    if v <= 0:
-        return ""
-    if v >= 1_000_000:
-        return "  (%.1fM votes)" % (v / 1_000_000.0)
-    if v >= 1_000:
-        return "  (%dK votes)" % (v // 1_000)
-    return "  (%d votes)" % v
-
-
-def _add_rating_rows(handle, movie, rating, filmarks):
-    """Pin one row per available rating source at the top of movie_detail
-    (SpecialSort=top). Each row uses the source's logo as its icon. Rows are
-    informational — isFolder=False + IsPlayable=false means Kodi treats them
-    as no-ops on activation."""
-    rows = []  # (icon_filename, label)
-
-    tmdb_avg = movie.get("tmdb_vote_average") or 0
-    try:
-        tmdb_avg = float(tmdb_avg)
-    except (TypeError, ValueError):
-        tmdb_avg = 0
-    if tmdb_avg > 0:
-        rows.append(("rating_tmdb.png", "TMDB  [B]%.1f[/B]" % tmdb_avg))
-
-    if rating:
-        try:
-            imdb = float(rating.get("imdb_rating") or 0)
-        except (TypeError, ValueError):
-            imdb = 0
-        if imdb > 0:
-            rows.append(("rating_imdb.png",
-                         "IMDb  [B]%.1f[/B]%s" % (imdb, _format_imdb_votes(rating.get("imdb_vote_count")))))
-
-        rt = (rating.get("rt_score") or "").strip()
-        if rt:
-            rows.append(("rating_rt.png", "Rotten Tomatoes  [B]%s[/B]" % rt))
-
-        try:
-            mc = int(rating.get("metacritic") or 0)
-        except (TypeError, ValueError):
-            mc = 0
-        if mc > 0:
-            rows.append(("rating_metacritic.png", "Metacritic  [B]%d[/B]" % mc))
-
-    if filmarks:
-        # Filmarks is stored 0-5; display 0-10 to match the web UI.
-        try:
-            fm = float(filmarks.get("rating") or 0)
-        except (TypeError, ValueError):
-            fm = 0
-        if fm > 0:
-            rows.append(("rating_filmarks.png", "Filmarks  [B]%.1f[/B]" % (fm * 2.0)))
-
-    if not rows:
-        return
-
-    # Folder rows render reliably across skins. Clicking re-enters the same
-    # detail page with no_resolve=1 so we don't re-trigger the expensive RD
-    # resolve on a casual tap.
-    movie_url = _url(action="movie", movie_id=movie.get("id"), no_resolve="1")
-    for icon_file, label in rows:
-        li = xbmcgui.ListItem(label=label)
-        icon = _RATING_ICON_PATH + icon_file
-        li.setArt({"icon": icon, "thumb": icon})
-        li.setProperty("SpecialSort", "top")
-        li.setInfo("video", {"title": label, "mediatype": "movie"})
-        xbmcplugin.addDirectoryItem(handle, movie_url, li, isFolder=True)
-
-
 def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     # Always resolve on entry — RD's cached release list rotates and stream
     # URLs expire, so a fresh resolve guarantees the picker shows what's
@@ -757,6 +756,20 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     filmarks = data.get("filmarks")
     links = data.get("debrid_links") or []
 
+    # Build a card-style ratings dict so each link row in the picker carries
+    # the same rating data the list views attach (Filmarks is stored 0-5 in
+    # the API; _attach_ratings takes care of the 0-10 display).
+    card_rating = {}
+    if rating:
+        card_rating.update({
+            "imdb_rating": rating.get("imdb_rating") or 0,
+            "imdb_vote_count": rating.get("imdb_vote_count") or 0,
+            "rt_score": rating.get("rt_score") or "",
+            "metacritic": rating.get("metacritic") or 0,
+        })
+    if filmarks and filmarks.get("rating"):
+        card_rating["filmarks_rating"] = filmarks.get("rating")
+
     # Last-played link (so the picker can flag where the user left off).
     last_link_id = 0
     try:
@@ -767,8 +780,6 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
 
     xbmcplugin.setPluginCategory(handle, movie.get("title") or "Movie")
     xbmcplugin.setContent(handle, "videos")
-
-    _add_rating_rows(handle, movie, rating, filmarks)
 
     if not links:
         li = xbmcgui.ListItem(label="[B]» Retry Real-Debrid resolve[/B]")
@@ -797,9 +808,8 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
             }
             if movie.get("imdb_id"):
                 info["imdbnumber"] = movie["imdb_id"]
-            if rating and rating.get("imdb_rating"):
-                info["rating"] = float(rating["imdb_rating"])
             li.setInfo("video", info)
+            _attach_ratings(li, movie, card_rating)
             li.setProperty("IsPlayable", "true")
             url = _url(action="play", link_id=link["id"], movie_id=movie_id)
             xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)

@@ -48,8 +48,7 @@ def dispatch(argv):
         elif action == "import_movie":
             views.import_movie(handle, int(params["movie_id"]))
         elif action == "movie":
-            views.movie_detail(handle, int(params["movie_id"]),
-                               auto_resolve=(params.get("no_resolve") != "1"))
+            views.movie_detail(handle, int(params["movie_id"]))
         elif action == "play":
             play.play_link(handle, int(params["link_id"]),
                            int(params.get("movie_id", "0")))
