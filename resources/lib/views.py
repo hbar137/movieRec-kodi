@@ -252,6 +252,7 @@ def movie_detail(handle, movie_id):
     if not links:
         # Trigger resolve and offer placeholder
         li = xbmcgui.ListItem(label="[B]Resolve via Real-Debrid[/B]")
+        li.setProperty("IsPlayable", "true")
         url = _url(action="resolve_and_play", movie_id=movie_id)
         xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
     else:
