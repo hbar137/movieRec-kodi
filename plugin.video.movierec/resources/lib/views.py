@@ -189,63 +189,124 @@ def _filter_summary(params, sort_options):
     return ", ".join(bits) if bits else "none"
 
 
-def _prompt_filters(action, sort_options, current):
-    """Pop a chained dialog and return a new params dict (or None if cancelled)."""
+_FILTER_ROWS = [
+    ("sort",         "Sort"),
+    ("genre",        "Genre"),
+    ("year",         "Year range"),
+    ("rating_min",   "Min IMDB rating"),
+    ("rd_available", "Real-Debrid"),
+]
+
+
+def _row_value(key, state, sort_options):
+    if key == "sort":
+        s = state.get("sort")
+        return dict(sort_options).get(s, "default") if s else "default"
+    if key == "year":
+        ymin, ymax = state.get("year_min"), state.get("year_max")
+        if not ymin and not ymax:
+            return "any"
+        return "%s – %s" % (ymin or "…", ymax or "…")
+    if key == "rd_available":
+        return "Only available" if state.get("rd_available") == "true" else "any"
+    v = state.get(key)
+    return v if v else "any"
+
+
+def _edit_row(key, state, sort_options):
+    """Edit a single filter row in place. Returns True if changed."""
     dlg = xbmcgui.Dialog()
-
-    # Sort
-    sort_labels = ["(keep)"] + [lbl for _, lbl in sort_options]
-    idx = dlg.select("Sort by", sort_labels)
-    if idx is None or idx < 0:
-        return None
-    new_params = dict(current)
-    if idx > 0:
-        new_params["sort"] = sort_options[idx - 1][0]
-
-    # Genre
-    try:
-        genres = api.get("/genres") or []
-    except api.APIError:
-        genres = []
-    genre_labels = ["(any)", "(keep current)"] + list(genres)
-    gidx = dlg.select("Genre", genre_labels)
-    if gidx == 0:
-        new_params.pop("genre", None)
-    elif gidx >= 2:
-        new_params["genre"] = genres[gidx - 2]
-
-    # Year range
-    if dlg.yesno("Filters", "Set a year range?", nolabel="Skip", yeslabel="Yes"):
-        ymin = dlg.input("Year from (blank = any)", type=xbmcgui.INPUT_NUMERIC)
-        ymax = dlg.input("Year to (blank = any)", type=xbmcgui.INPUT_NUMERIC)
+    if key == "sort":
+        labels = ["(default)"] + [lbl for _, lbl in sort_options]
+        i = dlg.select("Sort by", labels)
+        if i < 0:
+            return False
+        if i == 0:
+            state.pop("sort", None)
+        else:
+            state["sort"] = sort_options[i - 1][0]
+        return True
+    if key == "genre":
+        try:
+            genres = api.get("/genres") or []
+        except api.APIError:
+            genres = []
+        labels = ["(any)"] + list(genres)
+        i = dlg.select("Genre", labels)
+        if i < 0:
+            return False
+        if i == 0:
+            state.pop("genre", None)
+        else:
+            state["genre"] = genres[i - 1]
+        return True
+    if key == "year":
+        ymin = dlg.input("Year from (blank = any)", state.get("year_min") or "",
+                         type=xbmcgui.INPUT_NUMERIC)
+        ymax = dlg.input("Year to (blank = any)", state.get("year_max") or "",
+                         type=xbmcgui.INPUT_NUMERIC)
         if ymin:
-            new_params["year_min"] = ymin
+            state["year_min"] = ymin
         else:
-            new_params.pop("year_min", None)
+            state.pop("year_min", None)
         if ymax:
-            new_params["year_max"] = ymax
+            state["year_max"] = ymax
         else:
-            new_params.pop("year_max", None)
-
-    # Min rating
-    if dlg.yesno("Filters", "Set a minimum IMDB rating?", nolabel="Skip", yeslabel="Yes"):
-        rmin = dlg.input("Min rating (0-10, blank = any)", type=xbmcgui.INPUT_NUMERIC)
-        if rmin:
-            new_params["rating_min"] = rmin
+            state.pop("year_max", None)
+        return True
+    if key == "rating_min":
+        r = dlg.input("Min IMDB rating 0-10 (blank = any)",
+                      state.get("rating_min") or "", type=xbmcgui.INPUT_NUMERIC)
+        if r:
+            state["rating_min"] = r
         else:
-            new_params.pop("rating_min", None)
+            state.pop("rating_min", None)
+        return True
+    if key == "rd_available":
+        i = dlg.select("Real-Debrid", ["Any", "Only available"])
+        if i < 0:
+            return False
+        if i == 0:
+            state.pop("rd_available", None)
+        else:
+            state["rd_available"] = "true"
+        return True
+    return False
 
-    # RD only
-    rd_idx = dlg.select("Real-Debrid", ["Any", "Only available", "Keep current"])
-    if rd_idx == 0:
-        new_params.pop("rd_available", None)
-    elif rd_idx == 1:
-        new_params["rd_available"] = "true"
 
-    # page resets on filter change
-    new_params.pop("page", None)
-    new_params["action"] = action
-    return new_params
+def _prompt_filters(action, sort_options, current):
+    """Persistent menu: each row shows current value; Apply re-lists, Cancel aborts."""
+    dlg = xbmcgui.Dialog()
+    state = dict(current)
+    cursor = 0
+    APPLY, RESET, CANCEL = "__apply", "__reset", "__cancel"
+
+    while True:
+        rows = []
+        for key, label in _FILTER_ROWS:
+            rows.append("%s: [COLOR yellow]%s[/COLOR]" % (label, _row_value(key, state, sort_options)))
+        rows.append("[B]Apply[/B]")
+        rows.append("Reset all filters")
+        rows.append("Cancel")
+        actions = [k for k, _ in _FILTER_ROWS] + [APPLY, RESET, CANCEL]
+
+        i = dlg.select("Filters", rows, preselect=cursor)
+        if i is None or i < 0:
+            return None  # back/escape == cancel
+        cursor = i
+        chosen = actions[i]
+
+        if chosen == APPLY:
+            state.pop("page", None)
+            state["action"] = action
+            return state
+        if chosen == RESET:
+            state = {}
+            cursor = 0
+            continue
+        if chosen == CANCEL:
+            return None
+        _edit_row(chosen, state, sort_options)
 
 
 def _add_filter_entries(handle, action, current, sort_options):
