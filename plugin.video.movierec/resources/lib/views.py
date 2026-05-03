@@ -446,17 +446,25 @@ def _quality_rank(q):
     return {"4K": 1, "1080p": 2, "720p": 3}.get(q, 4)
 
 
-def movie_detail(handle, movie_id, update_listing=False):
+def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     data = api.get("/movies/%d" % movie_id)
     movie = data.get("movie") or {}
     rating = data.get("rating")
     links = data.get("debrid_links") or []
 
+    # First time we see this movie with no resolved links, trigger the
+    # Real-Debrid resolve automatically so the user doesn't have to click a
+    # button. resolve_links re-renders this view with auto_resolve=False
+    # afterwards to avoid looping when the resolve genuinely returns nothing.
+    if not links and auto_resolve:
+        resolve_links(handle, movie_id, update_listing=update_listing)
+        return
+
     xbmcplugin.setPluginCategory(handle, movie.get("title") or "Movie")
     xbmcplugin.setContent(handle, "videos")
 
     if not links:
-        li = xbmcgui.ListItem(label="[B]» Resolve via Real-Debrid[/B]")
+        li = xbmcgui.ListItem(label="[B]» Retry Real-Debrid resolve[/B]")
         li.setArt({"icon": "DefaultAddonsSearch.png"})
         li.setProperty("SpecialSort", "top")
         url = _url(action="resolve_links", movie_id=movie_id)
@@ -490,10 +498,11 @@ def movie_detail(handle, movie_id, update_listing=False):
     xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
-def resolve_links(handle, movie_id):
+def resolve_links(handle, movie_id, update_listing=True):
     """Trigger Real-Debrid resolve, wait for links to come back, then render
     movie_detail (now populated with resolved links) into the current
-    container so the user can pick which release to play."""
+    container so the user can pick which release to play. auto_resolve is
+    forced off in the re-render so a failed resolve doesn't loop."""
     import time
     progress = xbmcgui.DialogProgressBG()
     progress.create("movieRec", "Resolving via Real-Debrid…")
@@ -504,7 +513,7 @@ def resolve_links(handle, movie_id):
         except api.APIError as e:
             api.handle_error(e)
             progress.close()
-            movie_detail(handle, movie_id, update_listing=True)
+            movie_detail(handle, movie_id, update_listing=update_listing, auto_resolve=False)
             return
 
         for i in range(15):
@@ -519,4 +528,4 @@ def resolve_links(handle, movie_id):
 
     if not found:
         api.notify("No cached releases found", icon=xbmcgui.NOTIFICATION_WARNING)
-    movie_detail(handle, movie_id, update_listing=True)
+    movie_detail(handle, movie_id, update_listing=update_listing, auto_resolve=False)
