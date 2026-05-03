@@ -194,20 +194,26 @@ def _has_active_filters(state):
 
 
 def set_filter(handle, target_action, field, current):
-    """Open ONE focused dialog for a single field, then re-list the parent
-    with the updated state. The filter row stays visible the whole time, so
-    the user always sees what they're editing."""
+    """Apply one filter change, then render the target listing directly into
+    the same handle with updateListing=True. This replaces the contents of
+    the current container in-place, which is the only Kodi pattern that
+    reliably refreshes a list view from inside an action handler.
+    Container.Update + endOfDirectory(succeeded=False) chains are racey on
+    some Kodi builds and can silently drop the navigation."""
     dlg = xbmcgui.Dialog()
     state = dict(current)
     sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
 
-    cancelled = False
+    # Drop transient keys before mutating
+    state.pop("page", None)
+    state.pop("action", None)
+    state.pop("target", None)
+    state.pop("field", None)
 
     if field == "clear":
         state = {}
 
     elif field == "rd":
-        # Pure on/off: toggle directly, no dialog needed.
         if state.get("rd_available") == "true":
             state.pop("rd_available", None)
         else:
@@ -222,12 +228,11 @@ def set_filter(handle, target_action, field, current):
                 preselect = idx
                 break
         i = dlg.select("Sort by", labels, preselect=preselect)
-        if i < 0:
-            cancelled = True
-        elif i == 0:
+        if i == 0:
             state.pop("sort", None)
-        else:
+        elif i > 0:
             state["sort"] = sort_options[i - 1][0]
+        # i < 0 → cancelled; keep current state and re-render unchanged.
 
     elif field == "genre":
         try:
@@ -240,17 +245,14 @@ def set_filter(handle, target_action, field, current):
         if cur and cur in genres:
             preselect = genres.index(cur) + 1
         i = dlg.select("Genre", labels, preselect=preselect)
-        if i < 0:
-            cancelled = True
-        elif i == 0:
+        if i == 0:
             state.pop("genre", None)
-        else:
+        elif i > 0:
             state["genre"] = genres[i - 1]
 
     elif field == "year":
         ymin = dlg.input("Year from (blank = any)",
                          state.get("year_min") or "", type=xbmcgui.INPUT_NUMERIC)
-        # input() returns "" both for blank-OK and for cancel; treat as clear.
         ymax = dlg.input("Year to (blank = any)",
                          state.get("year_max") or "", type=xbmcgui.INPUT_NUMERIC)
         if ymin:
@@ -270,18 +272,13 @@ def set_filter(handle, target_action, field, current):
         else:
             state.pop("rating_min", None)
 
-    # Always navigate back to the parent listing — even on cancel — so the
-    # user never sees the empty-directory toast for a transient action URL.
-    state.pop("page", None)
-    state.pop("action", None)
-    state.pop("target", None)
-    state.pop("field", None)
-    state["action"] = target_action
-
-    xbmcplugin.endOfDirectory(handle, succeeded=False)
-    import xbmc
-    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(**state))
-    _ = cancelled  # informational only; cancel still returns to parent
+    # Render the target listing directly into THIS handle, marking it as a
+    # listing update so Kodi swaps the items in place without changing the
+    # navigation history.
+    if target_action == "watchlist":
+        watchlist(handle, page=0, params=state, update_listing=True)
+    else:
+        browse(handle, page=0, params=state, update_listing=True)
 
 
 _FILTER_FIELDS = [
@@ -326,7 +323,7 @@ def _add_filter_entries(handle, action, current, sort_options):
 # ---------------------------------------------------------------------------
 
 
-def _paged_list(handle, response, items_key, get_movie, page, action_kwargs):
+def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, update_listing=False):
     items = response.get(items_key) or []
     total = response.get("total") or 0
     limit = response.get("limit") or _page_size()
@@ -349,7 +346,7 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs):
         next_li = xbmcgui.ListItem(label="Next page →")
         xbmcplugin.addDirectoryItem(handle, _url(**kwargs), next_li, isFolder=True)
 
-    xbmcplugin.endOfDirectory(handle)
+    xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
 _FILTER_KEYS = ("sort", "genre", "language", "year_min", "year_max", "rating_min", "rd_available")
@@ -359,7 +356,7 @@ def _filter_kwargs(params):
     return {k: params[k] for k in _FILTER_KEYS if params.get(k)}
 
 
-def watchlist(handle, page, params):
+def watchlist(handle, page, params, update_listing=False):
     limit = _page_size()
     api_kwargs = dict(_filter_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
@@ -376,7 +373,7 @@ def watchlist(handle, page, params):
 
     action_kwargs = {"action": "watchlist"}
     action_kwargs.update(current)
-    _paged_list(handle, data, "items", get_movie, page, action_kwargs)
+    _paged_list(handle, data, "items", get_movie, page, action_kwargs, update_listing=update_listing)
 
 
 def history(handle, page=0):
@@ -413,7 +410,7 @@ def genres(handle):
     xbmcplugin.endOfDirectory(handle)
 
 
-def browse(handle, page, params):
+def browse(handle, page, params, update_listing=False):
     limit = _page_size()
     api_kwargs = dict(_filter_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
@@ -425,7 +422,7 @@ def browse(handle, page, params):
 
     action_kwargs = {"action": "browse"}
     action_kwargs.update(current)
-    _paged_list(handle, data, "movies", lambda m: m, page, action_kwargs)
+    _paged_list(handle, data, "movies", lambda m: m, page, action_kwargs, update_listing=update_listing)
 
 
 def search(handle):
