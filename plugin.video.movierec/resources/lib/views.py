@@ -205,11 +205,24 @@ def _inline_rating_suffix(movie, rating):
     return "  " + " · ".join(parts)
 
 
+def _plot_with_ratings(movie, rating):
+    """Prepend a colour-coded ratings line to the plot text. Estuary's Wide
+    List, Info Wall, and similar views render ListItem.Plot in their info
+    panel — so this is how we surface ratings while the user scrolls,
+    without touching the row labels themselves."""
+    plot = movie.get("overview") or ""
+    suffix = _inline_rating_suffix(movie, rating).strip()
+    if not suffix:
+        return plot
+    if not plot:
+        return suffix
+    return suffix + "\n\n" + plot
+
+
 def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     title = movie.get("title", "")
     year = movie.get("year") or 0
     label = "%s (%d)" % (title, year) if year else title
-    label += _inline_rating_suffix(movie, rating)
     if rd_available:
         label = "[COLOR green][RD][/COLOR] " + label
     if watched:
@@ -222,7 +235,7 @@ def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     info = {
         "title": title,
         "year": year,
-        "plot": movie.get("overview") or "",
+        "plot": _plot_with_ratings(movie, rating),
         "mediatype": "movie",
     }
     if movie.get("imdb_id"):
