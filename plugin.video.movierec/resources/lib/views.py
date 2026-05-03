@@ -515,6 +515,82 @@ def _quality_rank(q):
     return {"4K": 1, "1080p": 2, "720p": 3}.get(q, 4)
 
 
+_RATING_ICON_PATH = "special://home/addons/plugin.video.movierec/resources/media/"
+
+
+def _format_imdb_votes(votes):
+    try:
+        v = int(votes or 0)
+    except (TypeError, ValueError):
+        return ""
+    if v <= 0:
+        return ""
+    if v >= 1_000_000:
+        return "  (%.1fM votes)" % (v / 1_000_000.0)
+    if v >= 1_000:
+        return "  (%dK votes)" % (v // 1_000)
+    return "  (%d votes)" % v
+
+
+def _add_rating_rows(handle, movie, rating, filmarks):
+    """Pin one row per available rating source at the top of movie_detail
+    (SpecialSort=top). Each row uses the source's logo as its icon. Rows are
+    informational — isFolder=False + IsPlayable=false means Kodi treats them
+    as no-ops on activation."""
+    rows = []  # (icon_filename, label)
+
+    tmdb_avg = movie.get("tmdb_vote_average") or 0
+    try:
+        tmdb_avg = float(tmdb_avg)
+    except (TypeError, ValueError):
+        tmdb_avg = 0
+    if tmdb_avg > 0:
+        rows.append(("rating_tmdb.png", "TMDB  [B]%.1f[/B]" % tmdb_avg))
+
+    if rating:
+        try:
+            imdb = float(rating.get("imdb_rating") or 0)
+        except (TypeError, ValueError):
+            imdb = 0
+        if imdb > 0:
+            rows.append(("rating_imdb.png",
+                         "IMDb  [B]%.1f[/B]%s" % (imdb, _format_imdb_votes(rating.get("imdb_vote_count")))))
+
+        rt = (rating.get("rt_score") or "").strip()
+        if rt:
+            rows.append(("rating_rt.png", "Rotten Tomatoes  [B]%s[/B]" % rt))
+
+        try:
+            mc = int(rating.get("metacritic") or 0)
+        except (TypeError, ValueError):
+            mc = 0
+        if mc > 0:
+            rows.append(("rating_metacritic.png", "Metacritic  [B]%d[/B]" % mc))
+
+    if filmarks:
+        # Filmarks is stored 0-5; display 0-10 to match the web UI.
+        try:
+            fm = float(filmarks.get("rating") or 0)
+        except (TypeError, ValueError):
+            fm = 0
+        if fm > 0:
+            rows.append(("rating_filmarks.png", "Filmarks  [B]%.1f[/B]" % (fm * 2.0)))
+
+    if not rows:
+        return
+
+    # Re-entering the same page is harmless if a user clicks anyway (the
+    # detail call is fast and avoids the RD re-resolve).
+    movie_url = _url(action="movie", movie_id=movie.get("id"))
+    for icon_file, label in rows:
+        li = xbmcgui.ListItem(label=label)
+        icon = _RATING_ICON_PATH + icon_file
+        li.setArt({"icon": icon, "thumb": icon})
+        li.setProperty("SpecialSort", "top")
+        li.setProperty("IsPlayable", "false")
+        xbmcplugin.addDirectoryItem(handle, movie_url, li, isFolder=False)
+
+
 def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     # Always resolve on entry — RD's cached release list rotates and stream
     # URLs expire, so a fresh resolve guarantees the picker shows what's
@@ -527,6 +603,7 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     data = api.get("/movies/%d" % movie_id)
     movie = data.get("movie") or {}
     rating = data.get("rating")
+    filmarks = data.get("filmarks")
     links = data.get("debrid_links") or []
 
     # Last-played link (so the picker can flag where the user left off).
@@ -539,6 +616,8 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
 
     xbmcplugin.setPluginCategory(handle, movie.get("title") or "Movie")
     xbmcplugin.setContent(handle, "videos")
+
+    _add_rating_rows(handle, movie, rating, filmarks)
 
     if not links:
         li = xbmcgui.ListItem(label="[B]» Retry Real-Debrid resolve[/B]")
