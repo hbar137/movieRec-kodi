@@ -60,6 +60,37 @@ def md5_of(path: Path) -> str:
     return h.hexdigest()
 
 
+def write_index_html(dir_path: Path, rel_label: str):
+    """Write an Apache-autoindex-style index.html so Kodi's file manager can
+    browse this directory over HTTP (GitHub Pages does not auto-generate
+    directory listings)."""
+    entries = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    rows = ['<tr><td><a href="../">../</a></td></tr>']
+    for entry in entries:
+        if entry.name == "index.html":
+            continue
+        href = entry.name + ("/" if entry.is_dir() else "")
+        rows.append(f'<tr><td><a href="{href}">{href}</a></td></tr>')
+    html = (
+        "<!DOCTYPE html><html><head><title>Index of "
+        + rel_label
+        + "</title></head><body><h1>Index of "
+        + rel_label
+        + "</h1><table>"
+        + "".join(rows)
+        + "</table></body></html>\n"
+    )
+    (dir_path / "index.html").write_text(html)
+
+
+def write_all_indexes(out: Path):
+    """Walk the output tree and drop an index.html in every directory."""
+    for root, dirs, _ in os.walk(out):
+        rel = os.path.relpath(root, out)
+        label = "/" if rel == "." else "/" + rel + "/"
+        write_index_html(Path(root), label)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=".", help="repo root")
@@ -89,6 +120,7 @@ def main():
     index_path = out / "addons.xml"
     build_index(roots, index_path)
     (out / "addons.xml.md5").write_text(md5_of(index_path) + "\n")
+    write_all_indexes(out)
     print(f"index → {index_path}")
 
 
