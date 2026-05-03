@@ -235,8 +235,11 @@ def set_filter(handle, target_action, field, current):
         # i < 0 → cancelled; keep current state and re-render unchanged.
 
     elif field == "genre":
+        # Scope the dropdown to the current view so the user only sees genres
+        # that actually have movies behind them (avoids picking e.g. Drama in
+        # a watchlist where no watchlisted movie carries that genre).
         try:
-            genres = api.get("/genres") or []
+            genres = api.get("/genres", scope=target_action) or []
         except api.APIError:
             genres = []
         labels = ["(any)"] + list(genres)
