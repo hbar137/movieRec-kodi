@@ -205,18 +205,52 @@ def _inline_rating_suffix(movie, rating):
     return "  " + " · ".join(parts)
 
 
+def _format_runtime(minutes):
+    try:
+        m = int(minutes or 0)
+    except (TypeError, ValueError):
+        return ""
+    if m <= 0:
+        return ""
+    h, rem = divmod(m, 60)
+    if h <= 0:
+        return "%dm" % rem
+    if rem == 0:
+        return "%dh" % h
+    return "%dh %dm" % (h, rem)
+
+
+def _meta_line(movie):
+    parts = []
+    year = movie.get("year") or 0
+    if year:
+        parts.append(str(year))
+    rt = _format_runtime(movie.get("runtime"))
+    if rt:
+        parts.append(rt)
+    return " · ".join(parts)
+
+
 def _plot_with_ratings(movie, rating):
-    """Prepend a colour-coded ratings line to the plot text. Estuary's Wide
-    List, Info Wall, and similar views render ListItem.Plot in their info
-    panel — so this is how we surface ratings while the user scrolls,
-    without touching the row labels themselves."""
+    """Prepend a meta line (year · runtime) and a colour-coded ratings line
+    to the plot text. Estuary's Wide List, Info Wall, and similar views
+    render ListItem.Plot in their info panel — so this is how we surface
+    metadata + ratings while the user scrolls, without touching the row
+    labels themselves."""
     plot = movie.get("overview") or ""
-    suffix = _inline_rating_suffix(movie, rating).strip()
-    if not suffix:
+    header_lines = []
+    meta = _meta_line(movie)
+    if meta:
+        header_lines.append("[B]%s[/B]" % meta)
+    ratings = _inline_rating_suffix(movie, rating).strip()
+    if ratings:
+        header_lines.append(ratings)
+    if not header_lines:
         return plot
+    header = "\n".join(header_lines)
     if not plot:
-        return suffix
-    return suffix + "\n\n" + plot
+        return header
+    return header + "\n\n" + plot
 
 
 def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
