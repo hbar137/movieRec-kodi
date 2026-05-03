@@ -36,7 +36,7 @@ def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     year = movie.get("year") or 0
     label = "%s (%d)" % (title, year) if year else title
     if rd_available:
-        label = "[COLOR green]✓[/COLOR] " + label
+        label = "[COLOR green][RD][/COLOR] " + label
     if watched:
         label = "[COLOR gray][WATCHED][/COLOR] " + label
 
@@ -84,6 +84,11 @@ def _add_movie(handle, movie, rating, watched, rd_available):
     xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
 
 
+def _section_header(handle, label):
+    sep = xbmcgui.ListItem(label="[B]── %s ──[/B]" % label)
+    xbmcplugin.addDirectoryItem(handle, _url(action="root"), sep, isFolder=False)
+
+
 def dashboard(handle):
     data = api.get("/dashboard")
     xbmcplugin.setPluginCategory(handle, "Dashboard")
@@ -93,49 +98,183 @@ def dashboard(handle):
     watched_map = data.get("watched") or {}
     rd_map = data.get("rd_available") or {}
 
-    seen = set()
+    def _rd(mid):
+        return bool(rd_map.get(str(mid)) or rd_map.get(mid))
 
-    def add_section(label):
-        sep = xbmcgui.ListItem(label="── %s ──" % label)
-        xbmcplugin.addDirectoryItem(handle, _url(action="root"), sep, isFolder=False)
+    def _r(mid):
+        return ratings.get(str(mid)) or ratings.get(mid)
 
-    # Recently watched: entries reference embedded movie
-    recent = data.get("recently_watched") or []
-    if recent:
-        add_section("Recently Watched")
-        for e in recent:
-            m = e.get("movie") or {"id": e["movie_id"]}
-            m["id"] = e["movie_id"]
-            if m["id"] in seen:
-                continue
-            seen.add(m["id"])
-            r = ratings.get(str(m["id"])) or ratings.get(m["id"])
-            _add_movie(handle, m, r, True, bool(rd_map.get(str(m["id"])) or rd_map.get(m["id"])))
+    seen_section = False
 
-    top = data.get("top_unwatched") or []
-    if top:
-        add_section("Top Unwatched")
-        for m in top:
-            if m["id"] in seen:
-                continue
-            seen.add(m["id"])
-            r = ratings.get(str(m["id"])) or ratings.get(m["id"])
-            _add_movie(handle, m, r, False, bool(rd_map.get(str(m["id"])) or rd_map.get(m["id"])))
+    # 1. New on Digital / VOD — watchlist alerts only
+    alerts = data.get("letterboxd_alerts") or []
+    wl_alerts = [a for a in alerts if a.get("alert_type") == "watchlist" and a.get("movie")]
+    if wl_alerts:
+        _section_header(handle, "New on Digital / VOD")
+        for a in wl_alerts:
+            m = a.get("movie") or {}
+            mid = a.get("movie_id") or m.get("id")
+            m["id"] = mid
+            _add_movie(handle, m, _r(mid), bool(watched_map.get(str(mid))), _rd(mid))
+        seen_section = True
 
+    # 2. Your Watchlist
     wl = data.get("watchlist") or []
     if wl:
-        add_section("Watchlist")
+        _section_header(handle, "Your Watchlist")
         for w in wl:
             m = w.get("movie") or {}
-            m["id"] = w["movie_id"]
-            if m["id"] in seen:
-                continue
-            seen.add(m["id"])
-            r = ratings.get(str(m["id"])) or ratings.get(m["id"])
-            _add_movie(handle, m, r, bool(watched_map.get(str(m["id"]))),
-                       bool(rd_map.get(str(m["id"])) or rd_map.get(m["id"])))
+            mid = w["movie_id"]
+            m["id"] = mid
+            _add_movie(handle, m, _r(mid), bool(watched_map.get(str(mid))), _rd(mid))
+        seen_section = True
+
+    # 3. Top Rated on Your Watchlist (server's top_unwatched is highest-rated unwatched watchlist items)
+    top = data.get("top_unwatched") or []
+    if top:
+        _section_header(handle, "Top Rated on Your Watchlist")
+        for m in top:
+            mid = m["id"]
+            _add_movie(handle, m, _r(mid), False, _rd(mid))
+        seen_section = True
+
+    if not seen_section:
+        li = xbmcgui.ListItem(label="(Empty dashboard)")
+        xbmcplugin.addDirectoryItem(handle, _url(action="root"), li, isFolder=False)
 
     xbmcplugin.endOfDirectory(handle)
+
+
+# ---------------------------------------------------------------------------
+# Filters
+# ---------------------------------------------------------------------------
+
+_BROWSE_SORTS = [
+    ("popularity_desc", "Popularity ↓"),
+    ("popularity_asc", "Popularity ↑"),
+    ("rating_desc", "Rating ↓"),
+    ("rating_asc", "Rating ↑"),
+    ("year_desc", "Year ↓"),
+    ("year_asc", "Year ↑"),
+    ("title_asc", "Title A→Z"),
+]
+
+_WATCHLIST_SORTS = [
+    ("priority_desc", "Priority ↓"),
+    ("priority_asc", "Priority ↑"),
+    ("added_desc", "Date added ↓"),
+    ("added_asc", "Date added ↑"),
+    ("rating_desc", "Rating ↓"),
+    ("year_desc", "Year ↓"),
+    ("title_asc", "Title A→Z"),
+]
+
+
+def _filter_summary(params, sort_options):
+    bits = []
+    sort = params.get("sort")
+    if sort:
+        label = dict(sort_options).get(sort, sort)
+        bits.append("sort=%s" % label)
+    for key in ("genre", "language"):
+        v = params.get(key)
+        if v:
+            bits.append("%s=%s" % (key, v))
+    if params.get("year_min") or params.get("year_max"):
+        bits.append("year=%s-%s" % (params.get("year_min") or "", params.get("year_max") or ""))
+    if params.get("rating_min"):
+        bits.append("rating≥%s" % params["rating_min"])
+    if params.get("rd_available") == "true":
+        bits.append("RD only")
+    return ", ".join(bits) if bits else "none"
+
+
+def _prompt_filters(action, sort_options, current):
+    """Pop a chained dialog and return a new params dict (or None if cancelled)."""
+    dlg = xbmcgui.Dialog()
+
+    # Sort
+    sort_labels = ["(keep)"] + [lbl for _, lbl in sort_options]
+    idx = dlg.select("Sort by", sort_labels)
+    if idx is None or idx < 0:
+        return None
+    new_params = dict(current)
+    if idx > 0:
+        new_params["sort"] = sort_options[idx - 1][0]
+
+    # Genre
+    try:
+        genres = api.get("/genres") or []
+    except api.APIError:
+        genres = []
+    genre_labels = ["(any)", "(keep current)"] + list(genres)
+    gidx = dlg.select("Genre", genre_labels)
+    if gidx == 0:
+        new_params.pop("genre", None)
+    elif gidx >= 2:
+        new_params["genre"] = genres[gidx - 2]
+
+    # Year range
+    if dlg.yesno("Filters", "Set a year range?", nolabel="Skip", yeslabel="Yes"):
+        ymin = dlg.input("Year from (blank = any)", type=xbmcgui.INPUT_NUMERIC)
+        ymax = dlg.input("Year to (blank = any)", type=xbmcgui.INPUT_NUMERIC)
+        if ymin:
+            new_params["year_min"] = ymin
+        else:
+            new_params.pop("year_min", None)
+        if ymax:
+            new_params["year_max"] = ymax
+        else:
+            new_params.pop("year_max", None)
+
+    # Min rating
+    if dlg.yesno("Filters", "Set a minimum IMDB rating?", nolabel="Skip", yeslabel="Yes"):
+        rmin = dlg.input("Min rating (0-10, blank = any)", type=xbmcgui.INPUT_NUMERIC)
+        if rmin:
+            new_params["rating_min"] = rmin
+        else:
+            new_params.pop("rating_min", None)
+
+    # RD only
+    rd_idx = dlg.select("Real-Debrid", ["Any", "Only available", "Keep current"])
+    if rd_idx == 0:
+        new_params.pop("rd_available", None)
+    elif rd_idx == 1:
+        new_params["rd_available"] = "true"
+
+    # page resets on filter change
+    new_params.pop("page", None)
+    new_params["action"] = action
+    return new_params
+
+
+def _add_filter_entries(handle, action, current, sort_options):
+    summary = _filter_summary(current, sort_options)
+    li = xbmcgui.ListItem(label="[B][Filter…][/B]  [COLOR gray](%s)[/COLOR]" % summary)
+    li.setArt({"icon": "DefaultIconInfo.png"})
+    edit_url = _url(action="edit_filters", target=action, **{k: v for k, v in current.items() if k != "action"})
+    xbmcplugin.addDirectoryItem(handle, edit_url, li, isFolder=True)
+
+    if any(k in current for k in ("genre", "language", "year_min", "year_max", "rating_min", "rd_available", "sort")):
+        clear_li = xbmcgui.ListItem(label="[Clear filters]")
+        xbmcplugin.addDirectoryItem(handle, _url(action=action), clear_li, isFolder=True)
+
+
+def edit_filters(handle, target_action, current):
+    sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
+    new_params = _prompt_filters(target_action, sort_options, current)
+    if not new_params:
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+    # Redirect: end this dir then push the new URL via Container.Update
+    import xbmc
+    xbmcplugin.endOfDirectory(handle, succeeded=False)
+    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(**new_params))
+
+
+# ---------------------------------------------------------------------------
+# Paged listings
+# ---------------------------------------------------------------------------
 
 
 def _paged_list(handle, response, items_key, get_movie, page, action_kwargs):
@@ -164,17 +303,31 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs):
     xbmcplugin.endOfDirectory(handle)
 
 
-def watchlist(handle, page=0):
+_FILTER_KEYS = ("sort", "genre", "language", "year_min", "year_max", "rating_min", "rd_available")
+
+
+def _filter_kwargs(params):
+    return {k: params[k] for k in _FILTER_KEYS if params.get(k)}
+
+
+def watchlist(handle, page, params):
     limit = _page_size()
-    data = api.get("/watchlist", page=page, limit=limit)
+    api_kwargs = dict(_filter_kwargs(params))
+    api_kwargs.update({"page": page, "limit": limit})
+    data = api.get("/watchlist", **api_kwargs)
     xbmcplugin.setPluginCategory(handle, "Watchlist")
+
+    current = dict(_filter_kwargs(params))
+    _add_filter_entries(handle, "watchlist", current, _WATCHLIST_SORTS)
 
     def get_movie(item):
         m = item.get("movie") or {}
         m["id"] = item["movie_id"]
         return m
 
-    _paged_list(handle, data, "items", get_movie, page, {"action": "watchlist"})
+    action_kwargs = {"action": "watchlist"}
+    action_kwargs.update(current)
+    _paged_list(handle, data, "items", get_movie, page, action_kwargs)
 
 
 def history(handle, page=0):
@@ -211,12 +364,19 @@ def genres(handle):
     xbmcplugin.endOfDirectory(handle)
 
 
-def browse(handle, page=0, genre=None, language=None):
+def browse(handle, page, params):
     limit = _page_size()
-    data = api.get("/browse", page=page, limit=limit, genre=genre, language=language)
-    xbmcplugin.setPluginCategory(handle, genre or "Browse")
-    _paged_list(handle, data, "movies", lambda m: m, page,
-                {"action": "browse", "genre": genre, "language": language})
+    api_kwargs = dict(_filter_kwargs(params))
+    api_kwargs.update({"page": page, "limit": limit})
+    data = api.get("/browse", **api_kwargs)
+    xbmcplugin.setPluginCategory(handle, params.get("genre") or "Browse")
+
+    current = dict(_filter_kwargs(params))
+    _add_filter_entries(handle, "browse", current, _BROWSE_SORTS)
+
+    action_kwargs = {"action": "browse"}
+    action_kwargs.update(current)
+    _paged_list(handle, data, "movies", lambda m: m, page, action_kwargs)
 
 
 def search(handle):
@@ -250,13 +410,11 @@ def movie_detail(handle, movie_id):
     xbmcplugin.setContent(handle, "videos")
 
     if not links:
-        # Trigger resolve and offer placeholder
         li = xbmcgui.ListItem(label="[B]Resolve via Real-Debrid[/B]")
         li.setProperty("IsPlayable", "true")
         url = _url(action="resolve_and_play", movie_id=movie_id)
         xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
     else:
-        # Sort by quality + seeders
         links_sorted = sorted(links, key=lambda l: (_quality_rank(l.get("quality", "")),
                                                     -int(l.get("seeders") or 0)))
         for link in links_sorted:

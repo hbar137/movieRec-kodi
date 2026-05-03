@@ -23,17 +23,19 @@ def dispatch(argv):
         elif action == "dashboard":
             views.dashboard(handle)
         elif action == "watchlist":
-            views.watchlist(handle, page=int(params.get("page", "0")))
+            views.watchlist(handle, page=int(params.get("page", "0")), params=params)
         elif action == "history":
             views.history(handle, page=int(params.get("page", "0")))
         elif action == "browse":
-            views.browse(handle, page=int(params.get("page", "0")),
-                         genre=params.get("genre"),
-                         language=params.get("language"))
+            views.browse(handle, page=int(params.get("page", "0")), params=params)
         elif action == "browse_menu":
             views.browse_menu(handle)
         elif action == "genres":
             views.genres(handle)
+        elif action == "edit_filters":
+            target = params.pop("target", "browse")
+            params.pop("action", None)
+            views.edit_filters(handle, target, params)
         elif action == "search":
             views.search(handle)
         elif action == "search_results":

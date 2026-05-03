@@ -28,22 +28,49 @@ def _pick_link(links, pref):
                                         -int(l.get("seeders") or 0)))[0]
 
 
-def _fetch_subtitle_urls(movie_id):
+def _sanitize_label(s):
+    out = []
+    for ch in (s or ""):
+        if ch.isalnum() or ch in ("-", "_", ".", "(", ")"):
+            out.append(ch)
+        elif ch in (" ", "/", "\\", ":"):
+            out.append(".")
+    cleaned = "".join(out).strip(".")
+    while ".." in cleaned:
+        cleaned = cleaned.replace("..", ".")
+    return cleaned or "subtitle"
+
+
+def _fetch_subtitle_urls(movie_id, movie_title=None, year=None):
+    import urllib.parse as _ulp
     langs = ADDON.getSettingString("subtitle_languages") or "en"
     try:
         results = api.get("/subtitles/%d" % movie_id, languages=langs)
     except api.APIError:
         return []
     urls = []
+    base = _sanitize_label(movie_title or "movie")
+    if year:
+        base += ".%s" % year
     for s in results or []:
         source = s.get("source") or "opensubtitles"
         file_id = s.get("file_id") or s.get("id")
         if not file_id:
             continue
-        # Subtitle URL must be fetchable without custom headers, so embed password
-        url = api.signed_url("/subtitle-file/%s/%s" % (source, file_id))
+        # Build a friendly basename Kodi will display in the subtitle picker.
+        # Prefer the provider-supplied release/file name if present.
+        provider_name = s.get("file_name") or s.get("release") or ""
+        lang = (s.get("language") or "").lower() or langs.split(",")[0]
+        if provider_name:
+            label = _sanitize_label(provider_name)
+            if not label.lower().endswith(".srt"):
+                label += ".srt"
+        else:
+            label = "%s.%s.srt" % (base, lang)
+        encoded_id = _ulp.quote(str(file_id), safe="")
+        url = api.signed_url("/subtitle-file/%s/%s/%s" % (source, encoded_id, label))
         urls.append(url)
-    return urls[:5]  # cap to keep things sane
+    return urls[:5]
 
 
 def play_link(handle, link_id, movie_id):
@@ -65,7 +92,7 @@ def play_link(handle, link_id, movie_id):
         vinfo["plot"] = info["overview"]
     li.setInfo("video", vinfo)
 
-    sub_urls = _fetch_subtitle_urls(movie_id) if movie_id else []
+    sub_urls = _fetch_subtitle_urls(movie_id, info.get("title"), info.get("year")) if movie_id else []
     if sub_urls:
         li.setSubtitles(sub_urls)
 
