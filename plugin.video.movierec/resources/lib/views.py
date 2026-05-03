@@ -170,81 +170,89 @@ _WATCHLIST_SORTS = [
 ]
 
 
-def _filter_summary(params, sort_options):
-    bits = []
-    sort = params.get("sort")
-    if sort:
-        label = dict(sort_options).get(sort, sort)
-        bits.append("sort=%s" % label)
-    for key in ("genre", "language"):
-        v = params.get(key)
-        if v:
-            bits.append("%s=%s" % (key, v))
-    if params.get("year_min") or params.get("year_max"):
-        bits.append("year=%s-%s" % (params.get("year_min") or "", params.get("year_max") or ""))
-    if params.get("rating_min"):
-        bits.append("rating≥%s" % params["rating_min"])
-    if params.get("rd_available") == "true":
-        bits.append("RD only")
-    return ", ".join(bits) if bits else "none"
-
-
-_FILTER_ROWS = [
-    ("sort",         "Sort"),
-    ("genre",        "Genre"),
-    ("year",         "Year range"),
-    ("rating_min",   "Min IMDB rating"),
-    ("rd_available", "Real-Debrid"),
-]
-
-
-def _row_value(key, state, sort_options):
-    if key == "sort":
+def _row_value(field, state, sort_options):
+    if field == "sort":
         s = state.get("sort")
         return dict(sort_options).get(s, "default") if s else "default"
-    if key == "year":
+    if field == "genre":
+        return state.get("genre") or "any"
+    if field == "year":
         ymin, ymax = state.get("year_min"), state.get("year_max")
         if not ymin and not ymax:
             return "any"
         return "%s – %s" % (ymin or "…", ymax or "…")
-    if key == "rd_available":
-        return "Only available" if state.get("rd_available") == "true" else "any"
-    v = state.get(key)
-    return v if v else "any"
+    if field == "rating":
+        return state.get("rating_min") or "any"
+    if field == "rd":
+        return "yes" if state.get("rd_available") == "true" else "no"
+    return ""
 
 
-def _edit_row(key, state, sort_options):
-    """Edit a single filter row in place. Returns True if changed."""
+def _has_active_filters(state):
+    return any(state.get(k) for k in
+               ("sort", "genre", "language", "year_min", "year_max", "rating_min", "rd_available"))
+
+
+def set_filter(handle, target_action, field, current):
+    """Open ONE focused dialog for a single field, then re-list the parent
+    with the updated state. The filter row stays visible the whole time, so
+    the user always sees what they're editing."""
     dlg = xbmcgui.Dialog()
-    if key == "sort":
+    state = dict(current)
+    sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
+
+    cancelled = False
+
+    if field == "clear":
+        state = {}
+
+    elif field == "rd":
+        # Pure on/off: toggle directly, no dialog needed.
+        if state.get("rd_available") == "true":
+            state.pop("rd_available", None)
+        else:
+            state["rd_available"] = "true"
+
+    elif field == "sort":
         labels = ["(default)"] + [lbl for _, lbl in sort_options]
-        i = dlg.select("Sort by", labels)
+        cur = state.get("sort")
+        preselect = 0
+        for idx, (k, _) in enumerate(sort_options, start=1):
+            if k == cur:
+                preselect = idx
+                break
+        i = dlg.select("Sort by", labels, preselect=preselect)
         if i < 0:
-            return False
-        if i == 0:
+            cancelled = True
+        elif i == 0:
             state.pop("sort", None)
         else:
             state["sort"] = sort_options[i - 1][0]
-        return True
-    if key == "genre":
+
+    elif field == "genre":
         try:
             genres = api.get("/genres") or []
         except api.APIError:
             genres = []
         labels = ["(any)"] + list(genres)
-        i = dlg.select("Genre", labels)
+        preselect = 0
+        cur = state.get("genre")
+        if cur and cur in genres:
+            preselect = genres.index(cur) + 1
+        i = dlg.select("Genre", labels, preselect=preselect)
         if i < 0:
-            return False
-        if i == 0:
+            cancelled = True
+        elif i == 0:
             state.pop("genre", None)
         else:
             state["genre"] = genres[i - 1]
-        return True
-    if key == "year":
-        ymin = dlg.input("Year from (blank = any)", state.get("year_min") or "",
-                         type=xbmcgui.INPUT_NUMERIC)
-        ymax = dlg.input("Year to (blank = any)", state.get("year_max") or "",
-                         type=xbmcgui.INPUT_NUMERIC)
+
+    elif field == "year":
+        ymin = dlg.input("Year from (blank = any)",
+                         state.get("year_min") or "", type=xbmcgui.INPUT_NUMERIC)
+        # input() returns "" both for blank-OK and for cancel; treat as clear.
+        ymax = dlg.input("Year to (blank = any)",
+                         state.get("year_max") or "", type=xbmcgui.INPUT_NUMERIC)
         if ymin:
             state["year_min"] = ymin
         else:
@@ -253,84 +261,58 @@ def _edit_row(key, state, sort_options):
             state["year_max"] = ymax
         else:
             state.pop("year_max", None)
-        return True
-    if key == "rating_min":
+
+    elif field == "rating":
         r = dlg.input("Min IMDB rating 0-10 (blank = any)",
                       state.get("rating_min") or "", type=xbmcgui.INPUT_NUMERIC)
         if r:
             state["rating_min"] = r
         else:
             state.pop("rating_min", None)
-        return True
-    if key == "rd_available":
-        i = dlg.select("Real-Debrid", ["Any", "Only available"])
-        if i < 0:
-            return False
-        if i == 0:
-            state.pop("rd_available", None)
-        else:
-            state["rd_available"] = "true"
-        return True
-    return False
+
+    # Always navigate back to the parent listing — even on cancel — so the
+    # user never sees the empty-directory toast for a transient action URL.
+    state.pop("page", None)
+    state.pop("action", None)
+    state.pop("target", None)
+    state.pop("field", None)
+    state["action"] = target_action
+
+    xbmcplugin.endOfDirectory(handle, succeeded=False)
+    import xbmc
+    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(**state))
+    _ = cancelled  # informational only; cancel still returns to parent
 
 
-def _prompt_filters(action, sort_options, current):
-    """Persistent menu: each row shows current value; Apply re-lists, Cancel aborts."""
-    dlg = xbmcgui.Dialog()
-    state = dict(current)
-    cursor = 0
-    APPLY, RESET, CANCEL = "__apply", "__reset", "__cancel"
-
-    while True:
-        rows = []
-        for key, label in _FILTER_ROWS:
-            rows.append("%s: [COLOR yellow]%s[/COLOR]" % (label, _row_value(key, state, sort_options)))
-        rows.append("[B]Apply[/B]")
-        rows.append("Reset all filters")
-        rows.append("Cancel")
-        actions = [k for k, _ in _FILTER_ROWS] + [APPLY, RESET, CANCEL]
-
-        i = dlg.select("Filters", rows, preselect=cursor)
-        if i is None or i < 0:
-            return None  # back/escape == cancel
-        cursor = i
-        chosen = actions[i]
-
-        if chosen == APPLY:
-            state.pop("page", None)
-            state["action"] = action
-            return state
-        if chosen == RESET:
-            state = {}
-            cursor = 0
-            continue
-        if chosen == CANCEL:
-            return None
-        _edit_row(chosen, state, sort_options)
+_FILTER_FIELDS = [
+    ("sort",   "Sort"),
+    ("genre",  "Genre"),
+    ("year",   "Year"),
+    ("rating", "Min IMDB"),
+    ("rd",     "Real-Debrid"),
+]
 
 
 def _add_filter_entries(handle, action, current, sort_options):
-    summary = _filter_summary(current, sort_options)
-    li = xbmcgui.ListItem(label="[B][Filter…][/B]  [COLOR gray](%s)[/COLOR]" % summary)
-    li.setArt({"icon": "DefaultIconInfo.png"})
-    edit_url = _url(action="edit_filters", target=action, **{k: v for k, v in current.items() if k != "action"})
-    xbmcplugin.addDirectoryItem(handle, edit_url, li, isFolder=True)
+    """Render one row per filter at the top of the listing. Each row shows
+    the field name and its current value; clicking the row pops a single
+    focused dialog and re-renders the list with the new value."""
+    base = {k: v for k, v in current.items() if k != "action"}
+    icon = "DefaultAddonsSearch.png"
 
-    if any(k in current for k in ("genre", "language", "year_min", "year_max", "rating_min", "rd_available", "sort")):
-        clear_li = xbmcgui.ListItem(label="[Clear filters]")
-        xbmcplugin.addDirectoryItem(handle, _url(action=action), clear_li, isFolder=True)
+    for field, label in _FILTER_FIELDS:
+        value = _row_value(field, current, sort_options)
+        row_label = "[B]%s:[/B] [COLOR yellow]%s[/COLOR]" % (label, value)
+        li = xbmcgui.ListItem(label=row_label)
+        li.setArt({"icon": icon})
+        url = _url(action="set_filter", target=action, field=field, **base)
+        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
 
-
-def edit_filters(handle, target_action, current):
-    sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
-    new_params = _prompt_filters(target_action, sort_options, current)
-    if not new_params:
-        xbmcplugin.endOfDirectory(handle, succeeded=False)
-        return
-    # Redirect: end this dir then push the new URL via Container.Update
-    import xbmc
-    xbmcplugin.endOfDirectory(handle, succeeded=False)
-    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(**new_params))
+    if _has_active_filters(current):
+        clear_li = xbmcgui.ListItem(label="[COLOR red][Clear all filters][/COLOR]")
+        clear_li.setArt({"icon": icon})
+        clear_url = _url(action="set_filter", target=action, field="clear")
+        xbmcplugin.addDirectoryItem(handle, clear_url, clear_li, isFolder=True)
 
 
 # ---------------------------------------------------------------------------

@@ -32,10 +32,11 @@ def dispatch(argv):
             views.browse_menu(handle)
         elif action == "genres":
             views.genres(handle)
-        elif action == "edit_filters":
+        elif action == "set_filter":
             target = params.pop("target", "browse")
+            field = params.pop("field", "")
             params.pop("action", None)
-            views.edit_filters(handle, target, params)
+            views.set_filter(handle, target, field, params)
         elif action == "search":
             views.search(handle)
         elif action == "search_results":
