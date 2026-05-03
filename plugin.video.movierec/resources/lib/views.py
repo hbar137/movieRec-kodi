@@ -447,18 +447,18 @@ def _quality_rank(q):
 
 
 def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
+    # Always resolve on entry — RD's cached release list rotates and stream
+    # URLs expire, so a fresh resolve guarantees the picker shows what's
+    # currently playable. resolve_links re-enters movie_detail with
+    # auto_resolve=False so a genuinely empty resolve doesn't loop.
+    if auto_resolve:
+        resolve_links(handle, movie_id, update_listing=update_listing)
+        return
+
     data = api.get("/movies/%d" % movie_id)
     movie = data.get("movie") or {}
     rating = data.get("rating")
     links = data.get("debrid_links") or []
-
-    # First time we see this movie with no resolved links, trigger the
-    # Real-Debrid resolve automatically so the user doesn't have to click a
-    # button. resolve_links re-renders this view with auto_resolve=False
-    # afterwards to avoid looping when the resolve genuinely returns nothing.
-    if not links and auto_resolve:
-        resolve_links(handle, movie_id, update_listing=update_listing)
-        return
 
     xbmcplugin.setPluginCategory(handle, movie.get("title") or "Movie")
     xbmcplugin.setContent(handle, "videos")
