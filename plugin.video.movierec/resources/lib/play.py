@@ -99,7 +99,9 @@ def play_link(handle, link_id, movie_id):
         msg = "Resume from %s?" % _format_hms(pos)
         if dur > 0:
             msg += "  (of %s)" % _format_hms(dur)
-        if xbmcgui.Dialog().yesno("movieRec", msg, yeslabel="Resume", nolabel="Start over"):
+        if xbmcgui.Dialog().yesno("movieRec", msg,
+                                   yeslabel="Resume", nolabel="Start over",
+                                   defaultbutton=xbmcgui.DLG_YESNO_YES_BTN):
             resume_offset = pos
 
     li = xbmcgui.ListItem(path=stream_url)

@@ -2,6 +2,7 @@
 import sys
 import urllib.parse
 
+import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
@@ -194,12 +195,10 @@ def _has_active_filters(state):
 
 
 def set_filter(handle, target_action, field, current):
-    """Apply one filter change, then render the target listing directly into
-    the same handle with updateListing=True. This replaces the contents of
-    the current container in-place, which is the only Kodi pattern that
-    reliably refreshes a list view from inside an action handler.
-    Container.Update + endOfDirectory(succeeded=False) chains are racey on
-    some Kodi builds and can silently drop the navigation."""
+    """Apply one filter change, then redirect to the target listing URL via
+    Container.Update(...,replace) so the set_filter entry never stays in the
+    navigation stack — otherwise pressing back from a movie detail re-triggers
+    set_filter and reopens the picker dialog."""
     dlg = xbmcgui.Dialog()
     state = dict(current)
     sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
@@ -275,13 +274,14 @@ def set_filter(handle, target_action, field, current):
         else:
             state.pop("rating_min", None)
 
-    # Render the target listing directly into THIS handle, marking it as a
-    # listing update so Kodi swaps the items in place without changing the
-    # navigation history.
-    if target_action == "watchlist":
-        watchlist(handle, page=0, params=state, update_listing=True)
-    else:
-        browse(handle, page=0, params=state, update_listing=True)
+    # Build the target listing URL with the new filter state, end the
+    # set_filter directory empty, then ask Kodi to swap the current history
+    # entry for the target URL. `replace` ensures set_filter is removed from
+    # the back stack so a later "back" goes to the filtered listing rather
+    # than re-running this handler (which would reopen the dialog).
+    target_url = _url(action=target_action, **state)
+    xbmcplugin.endOfDirectory(handle, succeeded=False)
+    xbmc.executebuiltin("Container.Update(%s,replace)" % target_url)
 
 
 _FILTER_FIELDS = [
