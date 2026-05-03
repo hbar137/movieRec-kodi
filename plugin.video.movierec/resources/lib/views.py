@@ -296,21 +296,27 @@ _FILTER_FIELDS = [
 def _add_filter_entries(handle, action, current, sort_options):
     """Render one row per filter at the top of the listing. Each row shows
     the field name and its current value; clicking the row pops a single
-    focused dialog and re-renders the list with the new value."""
+    focused dialog and re-renders the list with the new value.
+
+    Each row sets the SpecialSort=top property so Kodi's skin keeps these
+    rows pinned above the movies even when the user toggles its native
+    sort/order in the side panel."""
     base = {k: v for k, v in current.items() if k != "action"}
     icon = "DefaultAddonsSearch.png"
 
     for field, label in _FILTER_FIELDS:
         value = _row_value(field, current, sort_options)
-        row_label = "[B]%s:[/B] [COLOR yellow]%s[/COLOR]" % (label, value)
+        row_label = "[COLOR cyan]» %s:[/COLOR] [COLOR yellow]%s[/COLOR]" % (label, value)
         li = xbmcgui.ListItem(label=row_label)
-        li.setArt({"icon": icon})
+        li.setArt({"icon": icon, "thumb": icon})
+        li.setProperty("SpecialSort", "top")
         url = _url(action="set_filter", target=action, field=field, **base)
         xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
 
     if _has_active_filters(current):
-        clear_li = xbmcgui.ListItem(label="[COLOR red][Clear all filters][/COLOR]")
-        clear_li.setArt({"icon": icon})
+        clear_li = xbmcgui.ListItem(label="[COLOR red]» Clear all filters[/COLOR]")
+        clear_li.setArt({"icon": icon, "thumb": icon})
+        clear_li.setProperty("SpecialSort", "top")
         clear_url = _url(action="set_filter", target=action, field="clear")
         xbmcplugin.addDirectoryItem(handle, clear_url, clear_li, isFolder=True)
 
