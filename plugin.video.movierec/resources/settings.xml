@@ -1,57 +1,57 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <settings version="1">
-    <section id="movierec" label="movieRec">
-        <category id="server" label="Server">
-            <group id="1" label="Connection">
-                <setting id="server_url" type="string" label="Server URL" help="">
+    <section id="movierec" label="30000">
+        <category id="server" label="30001">
+            <group id="1" label="30004">
+                <setting id="server_url" type="string" label="30010">
                     <level>0</level>
                     <default>https://movierec.eulerai.net</default>
                     <control type="edit" format="string">
-                        <heading>Server URL</heading>
+                        <heading>30010</heading>
                     </control>
                 </setting>
-                <setting id="password" type="string" label="Password" help="">
+                <setting id="password" type="string" label="30011">
                     <level>0</level>
                     <default></default>
                     <control type="edit" format="string">
-                        <heading>Password</heading>
+                        <heading>30011</heading>
                         <hidden>true</hidden>
                     </control>
                 </setting>
             </group>
         </category>
-        <category id="playback" label="Playback">
-            <group id="1" label="Stream">
-                <setting id="quality_pref" type="string" label="Preferred quality" help="">
+        <category id="playback" label="30002">
+            <group id="1" label="30005">
+                <setting id="quality_pref" type="string" label="30012">
                     <level>0</level>
                     <default>auto</default>
                     <constraints>
                         <options>
-                            <option label="Best available">auto</option>
-                            <option label="4K">4K</option>
-                            <option label="1080p">1080p</option>
-                            <option label="720p">720p</option>
+                            <option label="30100">auto</option>
+                            <option label="30101">4K</option>
+                            <option label="30102">1080p</option>
+                            <option label="30103">720p</option>
                         </options>
                     </constraints>
                     <control type="list" format="string"/>
                 </setting>
-                <setting id="subtitle_languages" type="string" label="Subtitle languages (CSV)" help="">
+                <setting id="subtitle_languages" type="string" label="30013">
                     <level>0</level>
                     <default>en</default>
                     <control type="edit" format="string">
-                        <heading>Subtitle languages</heading>
+                        <heading>30013</heading>
                     </control>
                 </setting>
-                <setting id="scrobble_enabled" type="boolean" label="Trakt scrobble" help="">
+                <setting id="scrobble_enabled" type="boolean" label="30014">
                     <level>0</level>
                     <default>true</default>
                     <control type="toggle"/>
                 </setting>
             </group>
         </category>
-        <category id="advanced" label="Advanced">
-            <group id="1" label="Misc">
-                <setting id="page_size" type="integer" label="Items per page" help="">
+        <category id="advanced" label="30003">
+            <group id="1" label="30006">
+                <setting id="page_size" type="integer" label="30015">
                     <level>0</level>
                     <default>40</default>
                     <constraints>
