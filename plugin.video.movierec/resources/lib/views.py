@@ -446,7 +446,7 @@ def _quality_rank(q):
     return {"4K": 1, "1080p": 2, "720p": 3}.get(q, 4)
 
 
-def movie_detail(handle, movie_id):
+def movie_detail(handle, movie_id, update_listing=False):
     data = api.get("/movies/%d" % movie_id)
     movie = data.get("movie") or {}
     rating = data.get("rating")
@@ -456,10 +456,11 @@ def movie_detail(handle, movie_id):
     xbmcplugin.setContent(handle, "videos")
 
     if not links:
-        li = xbmcgui.ListItem(label="[B]Resolve via Real-Debrid[/B]")
-        li.setProperty("IsPlayable", "true")
-        url = _url(action="resolve_and_play", movie_id=movie_id)
-        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
+        li = xbmcgui.ListItem(label="[B]» Resolve via Real-Debrid[/B]")
+        li.setArt({"icon": "DefaultAddonsSearch.png"})
+        li.setProperty("SpecialSort", "top")
+        url = _url(action="resolve_links", movie_id=movie_id)
+        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
     else:
         links_sorted = sorted(links, key=lambda l: (_quality_rank(l.get("quality", "")),
                                                     -int(l.get("seeders") or 0)))
@@ -486,4 +487,36 @@ def movie_detail(handle, movie_id):
             url = _url(action="play", link_id=link["id"], movie_id=movie_id)
             xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
 
-    xbmcplugin.endOfDirectory(handle)
+    xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
+
+
+def resolve_links(handle, movie_id):
+    """Trigger Real-Debrid resolve, wait for links to come back, then render
+    movie_detail (now populated with resolved links) into the current
+    container so the user can pick which release to play."""
+    import time
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Resolving via Real-Debrid…")
+    found = False
+    try:
+        try:
+            api.post("/realdebrid/resolve/%d" % movie_id)
+        except api.APIError as e:
+            api.handle_error(e)
+            progress.close()
+            movie_detail(handle, movie_id, update_listing=True)
+            return
+
+        for i in range(15):
+            progress.update(int(100 * (i + 1) / 15))
+            status = api.get("/realdebrid/resolve-status/%d" % movie_id)
+            if status.get("links"):
+                found = True
+                break
+            time.sleep(2)
+    finally:
+        progress.close()
+
+    if not found:
+        api.notify("No cached releases found", icon=xbmcgui.NOTIFICATION_WARNING)
+    movie_detail(handle, movie_id, update_listing=True)

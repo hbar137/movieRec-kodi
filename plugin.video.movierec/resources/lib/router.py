@@ -46,8 +46,8 @@ def dispatch(argv):
         elif action == "play":
             play.play_link(handle, int(params["link_id"]),
                            int(params.get("movie_id", "0")))
-        elif action == "resolve_and_play":
-            play.resolve_and_play(handle, int(params["movie_id"]))
+        elif action == "resolve_links":
+            views.resolve_links(handle, int(params["movie_id"]))
         else:
             views.root(handle)
     except api.APIError as e:
