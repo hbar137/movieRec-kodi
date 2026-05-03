@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <settings version="1">
-    <section id="movierec">
+    <section id="movierec" label="movieRec">
         <category id="server" label="Server">
-            <group id="1">
-                <setting id="server_url" type="string" label="Server URL">
+            <group id="1" label="Connection">
+                <setting id="server_url" type="string" label="Server URL" help="">
                     <level>0</level>
                     <default>https://movierec.eulerai.net</default>
-                    <constraints><allowempty>false</allowempty></constraints>
-                    <control type="edit" format="string"><heading>Server URL</heading></control>
+                    <control type="edit" format="string">
+                        <heading>Server URL</heading>
+                    </control>
                 </setting>
-                <setting id="password" type="string" label="Password">
+                <setting id="password" type="string" label="Password" help="">
                     <level>0</level>
                     <default></default>
-                    <constraints><allowempty>false</allowempty></constraints>
                     <control type="edit" format="string">
-                        <heading>Password (must match server kodi_password)</heading>
+                        <heading>Password</heading>
                         <hidden>true</hidden>
                     </control>
                 </setting>
             </group>
         </category>
         <category id="playback" label="Playback">
-            <group id="1">
-                <setting id="quality_pref" type="string" label="Preferred quality">
+            <group id="1" label="Stream">
+                <setting id="quality_pref" type="string" label="Preferred quality" help="">
                     <level>0</level>
                     <default>auto</default>
                     <constraints>
@@ -35,14 +35,14 @@
                     </constraints>
                     <control type="list" format="string"/>
                 </setting>
-                <setting id="subtitle_languages" type="string" label="Subtitle languages (CSV)">
+                <setting id="subtitle_languages" type="string" label="Subtitle languages (CSV)" help="">
                     <level>0</level>
                     <default>en</default>
                     <control type="edit" format="string">
-                        <heading>Comma-separated ISO codes (e.g. en,ja,es)</heading>
+                        <heading>Subtitle languages</heading>
                     </control>
                 </setting>
-                <setting id="scrobble_enabled" type="boolean" label="Trakt scrobble">
+                <setting id="scrobble_enabled" type="boolean" label="Trakt scrobble" help="">
                     <level>0</level>
                     <default>true</default>
                     <control type="toggle"/>
@@ -50,11 +50,15 @@
             </group>
         </category>
         <category id="advanced" label="Advanced">
-            <group id="1">
-                <setting id="page_size" type="integer" label="Items per page">
+            <group id="1" label="Misc">
+                <setting id="page_size" type="integer" label="Items per page" help="">
                     <level>0</level>
                     <default>40</default>
-                    <constraints><minimum>10</minimum><maximum>100</maximum><step>5</step></constraints>
+                    <constraints>
+                        <minimum>10</minimum>
+                        <maximum>100</maximum>
+                        <step>5</step>
+                    </constraints>
                     <control type="slider" format="integer"/>
                 </setting>
             </group>
