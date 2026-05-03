@@ -20,7 +20,7 @@ class Unauthorized(APIError):
 
 def _settings():
     base = ADDON.getSettingString("server_url").rstrip("/")
-    pw = ADDON.getSettingString("password")
+    pw = ADDON.getSettingString("server_password")
     return base, pw
 
 

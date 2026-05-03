@@ -10,9 +10,9 @@
                         <heading>30010</heading>
                     </control>
                 </setting>
-                <setting id="password" type="string" label="30011">
+                <setting id="server_password" type="string" label="30011">
                     <level>0</level>
-                    <default></default>
+                    <default>changeme</default>
                     <control type="edit" format="string">
                         <heading>30011</heading>
                     </control>
