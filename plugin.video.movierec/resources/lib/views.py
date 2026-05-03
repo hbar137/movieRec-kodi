@@ -286,6 +286,7 @@ def root(handle):
     items = [
         ("Dashboard", _url(action="dashboard")),
         ("Watchlist", _url(action="watchlist")),
+        ("Shows", _url(action="shows_root")),
         ("History", _url(action="history")),
         ("Browse", _url(action="browse_menu")),
         ("Search", _url(action="search")),
@@ -674,6 +675,19 @@ def history(handle, page=0):
         return m
 
     _paged_list(handle, data, "entries", get_movie, page, {"action": "history"})
+
+
+def shows_root(handle):
+    xbmcplugin.setPluginCategory(handle, "Shows")
+    items = [
+        ("All shows", _url(action="shows_browse")),
+        ("Show watchlist", _url(action="show_watchlist")),
+    ]
+    for label, url in items:
+        li = xbmcgui.ListItem(label=label)
+        li.setArt({"icon": "DefaultFolder.png"})
+        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+    xbmcplugin.endOfDirectory(handle)
 
 
 def browse_menu(handle):

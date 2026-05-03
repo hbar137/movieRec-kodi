@@ -143,6 +143,116 @@ def play_link(handle, link_id, movie_id):
         ).start()
 
 
+def _fetch_episode_subtitle_urls(episode_id, show_title=None, season=None, episode=None):
+    import urllib.parse as _ulp
+    langs = ADDON.getSettingString("subtitle_languages") or "en"
+    try:
+        results = api.get("/episode-subtitles/%d" % episode_id, languages=langs)
+    except api.APIError:
+        return []
+    urls = []
+    base = _sanitize_label(show_title or "show")
+    if season and episode:
+        base += ".S%02dE%02d" % (int(season), int(episode))
+    for s in results or []:
+        source = s.get("source") or "opensubtitles"
+        file_id = s.get("file_id") or s.get("id")
+        if not file_id:
+            continue
+        provider_name = s.get("file_name") or s.get("release") or ""
+        lang = (s.get("language") or "").lower() or langs.split(",")[0]
+        if provider_name:
+            label = _sanitize_label(provider_name)
+            if not label.lower().endswith(".srt"):
+                label += ".srt"
+        else:
+            label = "%s.%s.srt" % (base, lang)
+        encoded_id = _ulp.quote(str(file_id), safe="")
+        url = api.signed_url("/subtitle-file/%s/%s/%s" % (source, encoded_id, label))
+        urls.append(url)
+    return urls[:5]
+
+
+def play_episode(handle, link_id, episode_id, show_id):
+    """Resolve an episode link, hand stream to Kodi with episode InfoLabels +
+    subtitles, then spawn scrobble + progress watchers."""
+    info = api.get("/play-episode/%d" % link_id)
+    stream_url = info.get("stream_url")
+    if not stream_url:
+        api.notify("No stream URL available", icon=xbmcgui.NOTIFICATION_ERROR)
+        xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+        return
+
+    pos = int(info.get("position_seconds") or 0)
+    dur = int(info.get("duration_seconds") or 0)
+    resume_offset = 0
+    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
+        msg = "Resume from %s?" % _format_hms(pos)
+        if dur > 0:
+            msg += "  (of %s)" % _format_hms(dur)
+        if xbmcgui.Dialog().yesno("movieRec", msg,
+                                   yeslabel="Resume", nolabel="Start over",
+                                   defaultbutton=xbmcgui.DLG_YESNO_YES_BTN):
+            resume_offset = pos
+
+    li = xbmcgui.ListItem(path=stream_url)
+    show_title = info.get("show_title") or "movieRec"
+    ep_title = info.get("episode_title") or info.get("filename") or ""
+    season_num = int(info.get("season_number") or 0)
+    ep_num = int(info.get("episode_number") or 0)
+
+    vinfo = {
+        "tvshowtitle": show_title,
+        "title": ep_title,
+        "season": season_num,
+        "episode": ep_num,
+        "mediatype": "episode",
+    }
+    if info.get("show_year"):
+        try:
+            vinfo["year"] = int(info["show_year"])
+        except (TypeError, ValueError):
+            pass
+    if info.get("episode_imdb_id"):
+        vinfo["imdbnumber"] = info["episode_imdb_id"]
+    elif info.get("show_imdb_id"):
+        vinfo["imdbnumber"] = info["show_imdb_id"]
+    if info.get("episode_overview"):
+        vinfo["plot"] = info["episode_overview"]
+    if info.get("air_date"):
+        vinfo["aired"] = info["air_date"]
+    li.setInfo("video", vinfo)
+    if resume_offset:
+        li.setProperty("StartOffset", str(resume_offset))
+        li.setProperty("ResumeTime", str(resume_offset))
+        if dur > 0:
+            li.setProperty("TotalTime", str(dur))
+
+    sub_urls = _fetch_episode_subtitle_urls(
+        episode_id, show_title, season_num, ep_num)
+    if sub_urls:
+        li.setSubtitles(sub_urls)
+
+    xbmcplugin.setResolvedUrl(handle, True, li)
+
+    # Trakt scrobble — episode form needs (show_imdb, S, E).
+    if (ADDON.getSettingBool("scrobble_enabled")
+            and info.get("show_imdb_id") and season_num and ep_num):
+        threading.Thread(
+            target=scrobble.watch_episode,
+            args=(info["show_imdb_id"], season_num, ep_num,
+                  "%s S%02dE%02d" % (show_title, season_num, ep_num)),
+            daemon=True,
+        ).start()
+
+    # Progress / resume reporter.
+    threading.Thread(
+        target=progress_mod.watch_episode,
+        args=(int(episode_id), int(show_id), int(link_id)),
+        daemon=True,
+    ).start()
+
+
 def resolve_and_play(handle, movie_id):
     api.notify("Resolving via Real-Debrid…")
     try:

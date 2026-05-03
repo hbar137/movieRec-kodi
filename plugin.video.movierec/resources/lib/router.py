@@ -3,7 +3,7 @@ import urllib.parse
 
 import xbmcplugin
 
-from . import api, views, play
+from . import api, views, views_shows, play
 
 
 def _parse(argv):
@@ -54,6 +54,32 @@ def dispatch(argv):
                            int(params.get("movie_id", "0")))
         elif action == "resolve_links":
             views.resolve_links(handle, int(params["movie_id"]))
+        # Show / episode actions
+        elif action == "shows_root":
+            views.shows_root(handle)
+        elif action == "shows_browse":
+            views_shows.shows_browse(handle, page=int(params.get("page", "0")), params=params)
+        elif action == "show_watchlist":
+            views_shows.show_watchlist_view(handle, page=int(params.get("page", "0")), params=params)
+        elif action == "show":
+            views_shows.show_detail(handle, int(params["show_id"]))
+        elif action == "season":
+            views_shows.season_detail(handle, int(params["show_id"]), int(params["season"]))
+        elif action == "episode":
+            views_shows.episode_detail(handle,
+                                       int(params["episode_id"]),
+                                       int(params["show_id"]),
+                                       int(params["season"]))
+        elif action == "play_episode":
+            play.play_episode(handle,
+                              int(params["link_id"]),
+                              int(params["episode_id"]),
+                              int(params.get("show_id", "0")))
+        elif action == "resolve_episode":
+            views_shows.resolve_episode(handle,
+                                        int(params["episode_id"]),
+                                        int(params["show_id"]),
+                                        int(params["season"]))
         else:
             views.root(handle)
     except api.APIError as e:

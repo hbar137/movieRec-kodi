@@ -70,3 +70,60 @@ def watch(imdb_id, title):
     # Playback ended — send stop with final progress.
     if started:
         _send("stop", imdb_id, last_progress)
+
+
+def _send_episode(action, show_imdb_id, season, episode, progress):
+    try:
+        api.post("/scrobble-episode", body={
+            "action": action,
+            "show_imdb_id": show_imdb_id,
+            "season_number": int(season),
+            "episode_number": int(episode),
+            "progress": float(progress),
+        })
+    except api.APIError as e:
+        xbmc.log("[movieRec] episode scrobble %s failed: %s" % (action, e), xbmc.LOGWARNING)
+
+
+def watch_episode(show_imdb_id, season, episode, title):
+    """Episode-form scrobble watcher. Same polling pattern as watch() but the
+    server proxies to Trakt's episode scrobble endpoint."""
+    player = xbmc.Player()
+
+    for _ in range(20):
+        if player.isPlaying():
+            break
+        xbmc.sleep(500)
+    else:
+        return
+
+    duration = 0.0
+    try:
+        duration = player.getTotalTime()
+    except RuntimeError:
+        return
+
+    started = False
+    last_progress = 0.0
+    monitor = xbmc.Monitor()
+
+    while not monitor.abortRequested() and player.isPlaying():
+        try:
+            cur = player.getTime()
+            if duration <= 0:
+                duration = player.getTotalTime() or 0.0
+        except RuntimeError:
+            break
+
+        progress = (cur / duration * 100.0) if duration > 0 else 0.0
+        last_progress = progress
+
+        if not started:
+            _send_episode("start", show_imdb_id, season, episode, progress)
+            started = True
+
+        if monitor.waitForAbort(5):
+            break
+
+    if started:
+        _send_episode("stop", show_imdb_id, season, episode, last_progress)
