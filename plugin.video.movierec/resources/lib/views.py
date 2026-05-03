@@ -463,6 +463,14 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
     rating = data.get("rating")
     links = data.get("debrid_links") or []
 
+    # Last-played link (so the picker can flag where the user left off).
+    last_link_id = 0
+    try:
+        pb = api.get("/playback-state/%d" % movie_id) or {}
+        last_link_id = int(pb.get("last_link_id") or 0)
+    except api.APIError:
+        pass
+
     xbmcplugin.setPluginCategory(handle, movie.get("title") or "Movie")
     xbmcplugin.setContent(handle, "videos")
 
@@ -481,6 +489,8 @@ def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):
             label = "[%s] %s  (%.1f GB, %d seeders)" % (
                 qual, link.get("filename") or link.get("torrent_title") or "",
                 size_gb, link.get("seeders") or 0)
+            if last_link_id and int(link.get("id") or 0) == last_link_id:
+                label = "[COLOR yellow]▶ Last played[/COLOR]  " + label
             li = xbmcgui.ListItem(label=label)
             li.setArt({"poster": _poster_url(movie.get("poster_path"))})
             info = {

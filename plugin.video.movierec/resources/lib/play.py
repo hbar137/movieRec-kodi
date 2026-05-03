@@ -7,7 +7,7 @@ import xbmcaddon
 import xbmcgui
 import xbmcplugin
 
-from . import api, scrobble
+from . import api, scrobble, progress as progress_mod
 
 ADDON = xbmcaddon.Addon()
 
@@ -73,6 +73,15 @@ def _fetch_subtitle_urls(movie_id, movie_title=None, year=None):
     return urls[:5]
 
 
+def _format_hms(seconds):
+    s = int(seconds or 0)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return "%d:%02d:%02d" % (h, m, sec)
+    return "%d:%02d" % (m, sec)
+
+
 def play_link(handle, link_id, movie_id):
     info = api.get("/play/%d" % link_id)
     stream_url = info.get("stream_url")
@@ -80,6 +89,18 @@ def play_link(handle, link_id, movie_id):
         api.notify("No stream URL available", icon=xbmcgui.NOTIFICATION_ERROR)
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
         return
+
+    # Resume offer: only if we have a saved position deep enough to matter and
+    # not so close to the end that "resume" would just credits-roll.
+    pos = int(info.get("position_seconds") or 0)
+    dur = int(info.get("duration_seconds") or 0)
+    resume_offset = 0
+    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
+        msg = "Resume from %s?" % _format_hms(pos)
+        if dur > 0:
+            msg += "  (of %s)" % _format_hms(dur)
+        if xbmcgui.Dialog().yesno("movieRec", msg, yeslabel="Resume", nolabel="Start over"):
+            resume_offset = pos
 
     li = xbmcgui.ListItem(path=stream_url)
     title = info.get("title") or info.get("filename") or "movieRec"
@@ -91,6 +112,11 @@ def play_link(handle, link_id, movie_id):
     if info.get("overview"):
         vinfo["plot"] = info["overview"]
     li.setInfo("video", vinfo)
+    if resume_offset:
+        li.setProperty("StartOffset", str(resume_offset))
+        li.setProperty("ResumeTime", str(resume_offset))
+        if dur > 0:
+            li.setProperty("TotalTime", str(dur))
 
     sub_urls = _fetch_subtitle_urls(movie_id, info.get("title"), info.get("year")) if movie_id else []
     if sub_urls:
@@ -103,6 +129,14 @@ def play_link(handle, link_id, movie_id):
         threading.Thread(
             target=scrobble.watch,
             args=(info["imdb_id"], title),
+            daemon=True,
+        ).start()
+
+    # Progress reporter — saves resume position to the server every ~10s + on stop.
+    if movie_id:
+        threading.Thread(
+            target=progress_mod.watch,
+            args=(int(movie_id), int(link_id)),
             daemon=True,
         ).start()
 
