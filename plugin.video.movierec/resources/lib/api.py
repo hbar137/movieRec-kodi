@@ -60,16 +60,16 @@ def _request(method, path, params=None, body=None, timeout=20):
     return json.loads(raw)
 
 
-def get(path, **params):
-    return _request("GET", path, params=params)
+def get(path, _timeout=20, **params):
+    return _request("GET", path, params=params, timeout=_timeout)
 
 
-def post(path, body=None, **params):
-    return _request("POST", path, params=params, body=body or {})
+def post(path, body=None, _timeout=20, **params):
+    return _request("POST", path, params=params, body=body or {}, timeout=_timeout)
 
 
-def put(path, body=None, **params):
-    return _request("PUT", path, params=params, body=body or {})
+def put(path, body=None, _timeout=20, **params):
+    return _request("PUT", path, params=params, body=body or {}, timeout=_timeout)
 
 
 def signed_url(path, **params):

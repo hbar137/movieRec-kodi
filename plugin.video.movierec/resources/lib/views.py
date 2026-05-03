@@ -509,15 +509,20 @@ def resolve_links(handle, movie_id, update_listing=True):
     found = False
     try:
         try:
-            api.post("/realdebrid/resolve/%d" % movie_id)
+            # Resolve scrapes Torrentio + resolves up to 5 magnets through RD
+            # synchronously — easily 30-60s on a cold movie. Use a generous
+            # client-side timeout; the user already sees a progress bar.
+            api.post("/realdebrid/resolve/%d" % movie_id, _timeout=120)
         except api.APIError as e:
             api.handle_error(e)
             progress.close()
             movie_detail(handle, movie_id, update_listing=update_listing, auto_resolve=False)
             return
 
-        for i in range(15):
-            progress.update(int(100 * (i + 1) / 15))
+        # Poll up to 60s — the server's background pass keeps adding releases
+        # to the DB after the synchronous first batch returns.
+        for i in range(30):
+            progress.update(int(100 * (i + 1) / 30))
             status = api.get("/realdebrid/resolve-status/%d" % movie_id)
             if status.get("links"):
                 found = True
