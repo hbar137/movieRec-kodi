@@ -5,7 +5,7 @@
             <group id="1">
                 <setting id="server_url" type="string" label="Server URL">
                     <level>0</level>
-                    <default>http://192.168.1.100:3032</default>
+                    <default>https://movierec.eulerai.net</default>
                     <constraints><allowempty>false</allowempty></constraints>
                     <control type="edit" format="string"><heading>Server URL</heading></control>
                 </setting>
