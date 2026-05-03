@@ -171,12 +171,46 @@ _WATCHLIST_SORTS = [
 ]
 
 
-def _row_value(field, state, sort_options):
+_LANGUAGE_NAMES_CACHE = {}
+_COUNTRY_NAMES_CACHE = {}
+
+
+def _code_name_lookup(field, target_action):
+    """Fetch /languages or /countries for the given scope, returning
+    (items, name_by_code). Both are cached per (field, scope) within the
+    process so back-and-forth between filter rows doesn't re-hit the API."""
+    cache = _LANGUAGE_NAMES_CACHE if field == "language" else _COUNTRY_NAMES_CACHE
+    key = target_action
+    if key in cache:
+        return cache[key]
+    path = "/languages" if field == "language" else "/countries"
+    try:
+        items = api.get(path, scope=target_action) or []
+    except api.APIError:
+        items = []
+    name_by_code = {it.get("code"): it.get("name") or it.get("code") for it in items}
+    cache[key] = (items, name_by_code)
+    return items, name_by_code
+
+
+def _row_value(field, state, sort_options, target_action="browse"):
     if field == "sort":
         s = state.get("sort")
         return dict(sort_options).get(s, "default") if s else "default"
     if field == "genre":
         return state.get("genre") or "any"
+    if field == "language":
+        code = state.get("language")
+        if not code:
+            return "any"
+        _, names = _code_name_lookup("language", target_action)
+        return names.get(code, code)
+    if field == "country":
+        code = state.get("country")
+        if not code:
+            return "any"
+        _, names = _code_name_lookup("country", target_action)
+        return names.get(code, code)
     if field == "year":
         ymin, ymax = state.get("year_min"), state.get("year_max")
         if not ymin and not ymax:
@@ -191,7 +225,8 @@ def _row_value(field, state, sort_options):
 
 def _has_active_filters(state):
     return any(state.get(k) for k in
-               ("sort", "genre", "language", "year_min", "year_max", "rating_min", "rd_available"))
+               ("sort", "genre", "language", "country",
+                "year_min", "year_max", "rating_min", "rd_available"))
 
 
 def set_filter(handle, target_action, field, current):
@@ -252,6 +287,27 @@ def set_filter(handle, target_action, field, current):
         elif i > 0:
             state["genre"] = genres[i - 1]
 
+    elif field in ("language", "country"):
+        # Re-fetch fresh (don't reuse the row-render cache) so a newly added
+        # movie shows up in the dropdown without restarting Kodi.
+        path = "/languages" if field == "language" else "/countries"
+        title = "Language" if field == "language" else "Country"
+        try:
+            items = api.get(path, scope=target_action) or []
+        except api.APIError:
+            items = []
+        codes = [it.get("code") for it in items]
+        labels = ["(any)"] + [it.get("name") or it.get("code") for it in items]
+        preselect = 0
+        cur = state.get(field)
+        if cur and cur in codes:
+            preselect = codes.index(cur) + 1
+        i = dlg.select(title, labels, preselect=preselect)
+        if i == 0:
+            state.pop(field, None)
+        elif i > 0:
+            state[field] = codes[i - 1]
+
     elif field == "year":
         ymin = dlg.input("Year from (blank = any)",
                          state.get("year_min") or "", type=xbmcgui.INPUT_NUMERIC)
@@ -292,11 +348,13 @@ def set_filter(handle, target_action, field, current):
 
 
 _FILTER_FIELDS = [
-    ("sort",   "Sort"),
-    ("genre",  "Genre"),
-    ("year",   "Year"),
-    ("rating", "Min IMDB"),
-    ("rd",     "Real-Debrid"),
+    ("sort",     "Sort"),
+    ("genre",    "Genre"),
+    ("language", "Language"),
+    ("country",  "Country"),
+    ("year",     "Year"),
+    ("rating",   "Min IMDB"),
+    ("rd",       "Real-Debrid"),
 ]
 
 
@@ -312,7 +370,7 @@ def _add_filter_entries(handle, action, current, sort_options):
     icon = "DefaultAddonsSearch.png"
 
     for field, label in _FILTER_FIELDS:
-        value = _row_value(field, current, sort_options)
+        value = _row_value(field, current, sort_options, target_action=action)
         row_label = "[COLOR cyan]» %s:[/COLOR] [COLOR yellow]%s[/COLOR]" % (label, value)
         li = xbmcgui.ListItem(label=row_label)
         li.setArt({"icon": icon, "thumb": icon})
@@ -359,7 +417,8 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, upd
     xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
-_FILTER_KEYS = ("sort", "genre", "language", "year_min", "year_max", "rating_min", "rd_available")
+_FILTER_KEYS = ("sort", "genre", "language", "country",
+                "year_min", "year_max", "rating_min", "rd_available")
 
 
 def _filter_kwargs(params):
