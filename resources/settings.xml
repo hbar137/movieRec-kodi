@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<settings version="1">
+    <section id="movierec">
+        <category id="server" label="Server">
+            <group id="1">
+                <setting id="server_url" type="string" label="Server URL">
+                    <level>0</level>
+                    <default>http://192.168.1.100:3032</default>
+                    <constraints><allowempty>false</allowempty></constraints>
+                    <control type="edit" format="string"><heading>Server URL</heading></control>
+                </setting>
+                <setting id="password" type="string" label="Password">
+                    <level>0</level>
+                    <default></default>
+                    <constraints><allowempty>false</allowempty></constraints>
+                    <control type="edit" format="string">
+                        <heading>Password (must match server kodi_password)</heading>
+                        <hidden>true</hidden>
+                    </control>
+                </setting>
+            </group>
+        </category>
+        <category id="playback" label="Playback">
+            <group id="1">
+                <setting id="quality_pref" type="string" label="Preferred quality">
+                    <level>0</level>
+                    <default>auto</default>
+                    <constraints>
+                        <options>
+                            <option label="Best available">auto</option>
+                            <option label="4K">4K</option>
+                            <option label="1080p">1080p</option>
+                            <option label="720p">720p</option>
+                        </options>
+                    </constraints>
+                    <control type="list" format="string"/>
+                </setting>
+                <setting id="subtitle_languages" type="string" label="Subtitle languages (CSV)">
+                    <level>0</level>
+                    <default>en</default>
+                    <control type="edit" format="string">
+                        <heading>Comma-separated ISO codes (e.g. en,ja,es)</heading>
+                    </control>
+                </setting>
+                <setting id="scrobble_enabled" type="boolean" label="Trakt scrobble">
+                    <level>0</level>
+                    <default>true</default>
+                    <control type="toggle"/>
+                </setting>
+            </group>
+        </category>
+        <category id="advanced" label="Advanced">
+            <group id="1">
+                <setting id="page_size" type="integer" label="Items per page">
+                    <level>0</level>
+                    <default>40</default>
+                    <constraints><minimum>10</minimum><maximum>100</maximum><step>5</step></constraints>
+                    <control type="slider" format="integer"/>
+                </setting>
+            </group>
+        </category>
+    </section>
+</settings>
