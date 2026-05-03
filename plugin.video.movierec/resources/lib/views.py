@@ -1,4 +1,6 @@
 """Directory views: root menu, dashboard, watchlist, history, browse, search, movie detail."""
+import json
+import os
 import sys
 import urllib.parse
 
@@ -6,10 +8,56 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
+import xbmcvfs
 
 from . import api
 
 ADDON = xbmcaddon.Addon()
+
+_SEARCH_HISTORY_FILE = os.path.join(
+    xbmcvfs.translatePath("special://profile/addon_data/plugin.video.movierec/"),
+    "search_history.json",
+)
+_SEARCH_HISTORY_MAX = 20
+
+
+def _load_search_history():
+    try:
+        with open(_SEARCH_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return [str(q) for q in data if q]
+    except (OSError, ValueError):
+        pass
+    return []
+
+
+def _save_search_history(history):
+    d = os.path.dirname(_SEARCH_HISTORY_FILE)
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(_SEARCH_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history[:_SEARCH_HISTORY_MAX], f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _record_search(query):
+    q = (query or "").strip()
+    if not q:
+        return
+    history = _load_search_history()
+    # MRU: drop any case-insensitive duplicate, prepend the new query.
+    history = [h for h in history if h.lower() != q.lower()]
+    history.insert(0, q)
+    _save_search_history(history)
+
+
+def _clear_search_history():
+    try:
+        os.remove(_SEARCH_HISTORY_FILE)
+    except OSError:
+        pass
 
 
 def _url(**kwargs):
@@ -495,20 +543,122 @@ def browse(handle, page, params, update_listing=False):
 
 
 def search(handle):
+    """Show 'New search…' prompt + past searches as a directory listing.
+    Picking a past query re-runs it; picking 'New search…' opens the input
+    dialog and records the result."""
+    xbmcplugin.setPluginCategory(handle, "Search")
+    xbmcplugin.setContent(handle, "files")
+
+    new_li = xbmcgui.ListItem(label="[B]» New search…[/B]")
+    new_li.setArt({"icon": "DefaultAddonsSearch.png"})
+    new_li.setProperty("SpecialSort", "top")
+    xbmcplugin.addDirectoryItem(handle, _url(action="search_new"), new_li, isFolder=True)
+
+    history = _load_search_history()
+    if history:
+        sep = xbmcgui.ListItem(label="[B]── Past searches ──[/B]")
+        sep.setProperty("SpecialSort", "top")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search"), sep, isFolder=False)
+
+        for q in history:
+            li = xbmcgui.ListItem(label=q)
+            li.setArt({"icon": "DefaultAddonsSearch.png"})
+            xbmcplugin.addDirectoryItem(handle,
+                                        _url(action="search_results", q=q),
+                                        li, isFolder=True)
+
+        clear_li = xbmcgui.ListItem(label="[COLOR red]» Clear search history[/COLOR]")
+        clear_li.setArt({"icon": "DefaultAddonsSearch.png"})
+        xbmcplugin.addDirectoryItem(handle, _url(action="search_clear"), clear_li, isFolder=True)
+
+    xbmcplugin.endOfDirectory(handle)
+
+
+def search_new(handle):
+    """Pop the input dialog, record the query, and render results."""
     kb = xbmcgui.Dialog().input("Search movieRec", type=xbmcgui.INPUT_ALPHANUM)
     if not kb:
         xbmcplugin.endOfDirectory(handle, succeeded=False)
         return
+    _record_search(kb)
     search_results(handle, kb)
 
 
+def search_clear(handle):
+    """Confirm + clear search history, then redraw the search root."""
+    if xbmcgui.Dialog().yesno("Search history",
+                              "Clear all saved searches?",
+                              nolabel="Cancel", yeslabel="Clear"):
+        _clear_search_history()
+    # Re-render the search root in place so the user sees the cleared state.
+    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(action="search"))
+    xbmcplugin.endOfDirectory(handle, succeeded=False)
+
+
 def search_results(handle, query):
-    data = api.get("/movies/search", q=query, limit=50)
+    """Combined local + TMDB search. Local hits render first; TMDB-only hits
+    render below a section header. Clicking a TMDB-only hit triggers an
+    import-then-open flow (see `import_movie`)."""
+    if not query:
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+    _record_search(query)
+
+    try:
+        data = api.get("/search", q=query) or {}
+    except api.APIError as e:
+        api.handle_error(e)
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+
+    local = data.get("local") or []
+    tmdb_only = data.get("tmdb") or []
+
     xbmcplugin.setPluginCategory(handle, "Search: %s" % query)
     xbmcplugin.setContent(handle, "movies")
-    for m in data.get("movies") or []:
-        _add_movie(handle, m, None, False, False)
+
+    if not local and not tmdb_only:
+        li = xbmcgui.ListItem(label="(No matches)")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search"), li, isFolder=False)
+        xbmcplugin.endOfDirectory(handle)
+        return
+
+    for m in local:
+        ratings = m.get("ratings")
+        watched = bool(m.get("watched"))
+        # rd_available isn't returned by /search; default to False — the
+        # detail page will resolve on demand anyway.
+        _add_movie(handle, m, ratings, watched, False)
+
+    if tmdb_only:
+        sep = xbmcgui.ListItem(label="[B]── More on TMDB ──[/B]")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search"), sep, isFolder=False)
+        for m in tmdb_only:
+            li = _movie_listitem(m, rating=None, watched=False, rd_available=False)
+            # Tag TMDB-only items so they're visually distinct from local ones.
+            li.setLabel("[COLOR cyan][+TMDB][/COLOR] " + li.getLabel())
+            url = _url(action="import_movie", movie_id=m["id"])
+            xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+
     xbmcplugin.endOfDirectory(handle)
+
+
+def import_movie(handle, movie_id):
+    """Import a TMDB-only result into the local DB, then jump to its detail
+    page. Used by search_results' TMDB-only rows."""
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Importing from TMDB…")
+    try:
+        try:
+            api.post("/movies/import/%d" % movie_id, _timeout=60)
+        except api.APIError as e:
+            api.handle_error(e)
+            xbmcplugin.endOfDirectory(handle, succeeded=False)
+            return
+    finally:
+        progress.close()
+    # Hand off to the standard detail flow (which kicks off RD resolve).
+    movie_detail(handle, movie_id)
 
 
 def _quality_rank(q):
@@ -579,16 +729,17 @@ def _add_rating_rows(handle, movie, rating, filmarks):
     if not rows:
         return
 
-    # Re-entering the same page is harmless if a user clicks anyway (the
-    # detail call is fast and avoids the RD re-resolve).
-    movie_url = _url(action="movie", movie_id=movie.get("id"))
+    # Folder rows render reliably across skins. Clicking re-enters the same
+    # detail page with no_resolve=1 so we don't re-trigger the expensive RD
+    # resolve on a casual tap.
+    movie_url = _url(action="movie", movie_id=movie.get("id"), no_resolve="1")
     for icon_file, label in rows:
         li = xbmcgui.ListItem(label=label)
         icon = _RATING_ICON_PATH + icon_file
         li.setArt({"icon": icon, "thumb": icon})
         li.setProperty("SpecialSort", "top")
-        li.setProperty("IsPlayable", "false")
-        xbmcplugin.addDirectoryItem(handle, movie_url, li, isFolder=False)
+        li.setInfo("video", {"title": label, "mediatype": "movie"})
+        xbmcplugin.addDirectoryItem(handle, movie_url, li, isFolder=True)
 
 
 def movie_detail(handle, movie_id, update_listing=False, auto_resolve=True):

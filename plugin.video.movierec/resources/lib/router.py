@@ -39,10 +39,17 @@ def dispatch(argv):
             views.set_filter(handle, target, field, params)
         elif action == "search":
             views.search(handle)
+        elif action == "search_new":
+            views.search_new(handle)
+        elif action == "search_clear":
+            views.search_clear(handle)
         elif action == "search_results":
             views.search_results(handle, params.get("q", ""))
+        elif action == "import_movie":
+            views.import_movie(handle, int(params["movie_id"]))
         elif action == "movie":
-            views.movie_detail(handle, int(params["movie_id"]))
+            views.movie_detail(handle, int(params["movie_id"]),
+                               auto_resolve=(params.get("no_resolve") != "1"))
         elif action == "play":
             play.play_link(handle, int(params["link_id"]),
                            int(params.get("movie_id", "0")))
