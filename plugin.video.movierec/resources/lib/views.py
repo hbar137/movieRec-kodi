@@ -159,10 +159,57 @@ def _attach_ratings(li, movie, rating):
         li.setProperty("Rating.Filmarks", "%.1f" % (fm * 2.0))
 
 
+def _inline_rating_suffix(movie, rating):
+    """Compose a compact ratings suffix like
+    `  [COLOR khaki]IMDb 7.4[/COLOR] · [COLOR cyan]TMDB 7.4[/COLOR] · ...`
+    so the user can see scores while scrolling on every skin (Estuary
+    included — it doesn't render multi-rating panels). Sources missing for
+    a movie are simply skipped."""
+    rating = rating or {}
+    parts = []
+
+    try:
+        imdb = float(rating.get("imdb_rating") or 0)
+    except (TypeError, ValueError):
+        imdb = 0.0
+    if imdb > 0:
+        parts.append("[COLOR khaki]IMDb %.1f[/COLOR]" % imdb)
+
+    try:
+        tmdb = float(movie.get("tmdb_vote_average") or 0)
+    except (TypeError, ValueError):
+        tmdb = 0.0
+    if tmdb > 0:
+        parts.append("[COLOR deepskyblue]TMDB %.1f[/COLOR]" % tmdb)
+
+    rt_pct = _parse_rt_percent(rating.get("rt_score"))
+    if rt_pct > 0:
+        parts.append("[COLOR tomato]RT %d%%[/COLOR]" % int(round(rt_pct)))
+
+    try:
+        mc = int(rating.get("metacritic") or 0)
+    except (TypeError, ValueError):
+        mc = 0
+    if mc > 0:
+        parts.append("[COLOR limegreen]MC %d[/COLOR]" % mc)
+
+    try:
+        fm = float(rating.get("filmarks_rating") or 0)
+    except (TypeError, ValueError):
+        fm = 0.0
+    if fm > 0:
+        parts.append("[COLOR orange]FM %.1f[/COLOR]" % (fm * 2.0))
+
+    if not parts:
+        return ""
+    return "  " + " · ".join(parts)
+
+
 def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
     title = movie.get("title", "")
     year = movie.get("year") or 0
     label = "%s (%d)" % (title, year) if year else title
+    label += _inline_rating_suffix(movie, rating)
     if rd_available:
         label = "[COLOR green][RD][/COLOR] " + label
     if watched:
