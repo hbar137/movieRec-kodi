@@ -274,13 +274,20 @@ def set_filter(handle, target_action, field, current):
         else:
             state.pop("rating_min", None)
 
-    # Build the target listing URL with the new filter state, end the
-    # set_filter directory empty, then ask Kodi to swap the current history
-    # entry for the target URL. `replace` ensures set_filter is removed from
-    # the back stack so a later "back" goes to the filtered listing rather
-    # than re-running this handler (which would reopen the dialog).
+    # Hybrid: render the target listing in-place via updateListing=True so the
+    # filter takes effect instantly (this is the only path that reliably draws
+    # on Bravia/Android TV — Container.Update alone is dropped silently there).
+    # Then fire Container.Update with the target URL and `replace` so the
+    # set_filter entry is swapped out of the back stack. If that builtin is
+    # honored, back from a movie detail lands on the filtered listing; if it's
+    # dropped, the visible filter still applied — we just regress to "back
+    # reopens the dialog" instead of breaking the filter.
+    if target_action == "watchlist":
+        watchlist(handle, page=0, params=state, update_listing=True)
+    else:
+        browse(handle, page=0, params=state, update_listing=True)
+
     target_url = _url(action=target_action, **state)
-    xbmcplugin.endOfDirectory(handle, succeeded=False)
     xbmc.executebuiltin("Container.Update(%s,replace)" % target_url)
 
 
