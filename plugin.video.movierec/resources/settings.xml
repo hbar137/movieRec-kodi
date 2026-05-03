@@ -15,7 +15,6 @@
                     <default></default>
                     <control type="edit" format="string">
                         <heading>30011</heading>
-                        <hidden>true</hidden>
                     </control>
                 </setting>
             </group>
