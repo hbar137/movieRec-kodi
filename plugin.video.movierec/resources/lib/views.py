@@ -441,11 +441,6 @@ def _code_name_lookup(field, target_action):
 
 
 _WATCHED_LABELS = {"true": "watched", "false": "unwatched"}
-_STATUS_LABELS = {
-    "not_started": "not started",
-    "started": "in progress",
-    "completed": "completed",
-}
 
 
 def _row_value(field, state, sort_options, target_action="browse"):
@@ -473,20 +468,19 @@ def _row_value(field, state, sort_options, target_action="browse"):
         return "%s – %s" % (ymin or "…", ymax or "…")
     if field == "rating":
         return state.get("rating_min") or "any"
-    if field == "rd":
-        return "yes" if state.get("rd_available") == "true" else "no"
     if field == "watched":
         return _WATCHED_LABELS.get(state.get("watched"), "any")
-    if field == "status":
-        return _STATUS_LABELS.get(state.get("status"), "any")
     return ""
 
 
+# Single source of truth for the keys a "Clear all" sweep needs to drop.
+# Mirrors the field set in _FILTER_FIELDS — keep them in sync.
+_FILTER_STATE_KEYS = ("sort", "genre", "language", "country",
+                      "year_min", "year_max", "rating_min", "watched")
+
+
 def _has_active_filters(state):
-    return any(state.get(k) for k in
-               ("sort", "genre", "language", "country",
-                "year_min", "year_max", "rating_min", "rd_available",
-                "watched", "status"))
+    return any(state.get(k) for k in _FILTER_STATE_KEYS)
 
 
 def set_filter(handle, target_action, field, current):
@@ -510,12 +504,6 @@ def set_filter(handle, target_action, field, current):
     if field == "clear":
         state = {}
 
-    elif field == "rd":
-        if state.get("rd_available") == "true":
-            state.pop("rd_available", None)
-        else:
-            state["rd_available"] = "true"
-
     elif field == "watched":
         # Three-state: any → watched → unwatched → any. Pop key for "any" so
         # the URL stays clean.
@@ -526,20 +514,6 @@ def set_filter(handle, target_action, field, current):
             state.pop("watched", None)
         else:
             state["watched"] = "true"
-
-    elif field == "status":
-        opts = [("", "(any)"),
-                ("not_started", "Not started"),
-                ("started", "In progress"),
-                ("completed", "Completed")]
-        labels = [lbl for _, lbl in opts]
-        cur = state.get("status") or ""
-        preselect = next((i for i, (k, _) in enumerate(opts) if k == cur), 0)
-        i = dlg.select("Status", labels, preselect=preselect)
-        if i == 0:
-            state.pop("status", None)
-        elif i > 0:
-            state["status"] = opts[i][0]
 
     elif field == "sort":
         labels = ["(default)"] + [lbl for _, lbl in sort_options]
@@ -643,27 +617,19 @@ def set_filter(handle, target_action, field, current):
     xbmc.executebuiltin("Container.Update(%s,replace)" % target_url)
 
 
-_BASE_FILTER_FIELDS = [
+# The single shared filter field set used by all four list views (Movie
+# Browse, Movie Watchlist, Show Browse, Show Watchlist). Keep this list in
+# sync with _FILTER_STATE_KEYS above and _FILTER_KEYS below — change one,
+# change all three. All four backend endpoints accept these query params.
+_FILTER_FIELDS = [
     ("sort",     "Sort"),
     ("genre",    "Genre"),
     ("language", "Language"),
     ("country",  "Country"),
     ("year",     "Year"),
     ("rating",   "Min IMDB"),
+    ("watched",  "Watched"),
 ]
-
-
-def _filter_fields_for(action):
-    fields = list(_BASE_FILTER_FIELDS)
-    # `watched` is meaningful on the all-items browse views (movies + shows).
-    # The watchlist views use their own status semantics.
-    if action in ("browse", "shows_browse"):
-        fields.append(("watched", "Watched"))
-    if action == "browse":
-        fields.append(("rd", "Real-Debrid"))
-    if action == "show_watchlist":
-        fields.append(("status", "Status"))
-    return fields
 
 
 def _add_filter_entries(handle, action, current, sort_options):
@@ -677,7 +643,7 @@ def _add_filter_entries(handle, action, current, sort_options):
     base = {k: v for k, v in current.items() if k != "action"}
     icon = "DefaultAddonsSearch.png"
 
-    for field, label in _filter_fields_for(action):
+    for field, label in _FILTER_FIELDS:
         value = _row_value(field, current, sort_options, target_action=action)
         row_label = "[COLOR cyan]» %s:[/COLOR] [COLOR yellow]%s[/COLOR]" % (label, value)
         li = xbmcgui.ListItem(label=row_label)
@@ -725,9 +691,11 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, upd
     xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
+# Query-param keys carried through to the backend. Mirrors _FILTER_FIELDS
+# but with year split into min/max and tag kept as a passthrough (no UI row
+# yet — Trakt list tags are exposed via a separate menu in the future).
 _FILTER_KEYS = ("sort", "genre", "language", "country",
-                "year_min", "year_max", "rating_min", "rd_available",
-                "watched", "status", "tag")
+                "year_min", "year_max", "rating_min", "watched", "tag")
 
 
 def _filter_kwargs(params):

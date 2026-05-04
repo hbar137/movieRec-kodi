@@ -72,25 +72,18 @@ def _show_listitem(show, ratings=None, watched=False, on_watchlist=False, progre
     return li
 
 
-_SHOW_BROWSE_KEYS = ("sort", "genre", "language", "country",
-                     "year_min", "year_max", "rating_min", "watched")
-
-
-def _show_browse_kwargs(params):
-    return {k: params[k] for k in _SHOW_BROWSE_KEYS if params.get(k)}
-
-
 def shows_browse(handle, page, params, update_listing=False):
-    """Mirror of views.browse but for shows."""
+    """Mirror of views.browse but for shows. Uses the shared filter component
+    in views — same fields, same query keys."""
     limit = views._page_size()
-    api_kwargs = dict(_show_browse_kwargs(params))
+    api_kwargs = dict(views._filter_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/shows", **api_kwargs)
     xbmcplugin.setPluginCategory(handle, params.get("genre") or "Shows")
     xbmcplugin.setContent(handle, "tvshows")
 
-    current = dict(_show_browse_kwargs(params))
+    current = dict(views._filter_kwargs(params))
     views._add_filter_entries(handle, "shows_browse", current, views._BROWSE_SORTS)
 
     items = data.get("shows") or []
@@ -119,25 +112,17 @@ def shows_browse(handle, page, params, update_listing=False):
     xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
-_SHOW_WATCHLIST_KEYS = ("sort", "genre", "language", "country", "tag",
-                        "year_min", "year_max", "rating_min", "status")
-
-
-def _show_watchlist_kwargs(params):
-    return {k: params[k] for k in _SHOW_WATCHLIST_KEYS if params.get(k)}
-
-
 def show_watchlist_view(handle, page, params, update_listing=False):
-    """Show watchlist (mirror of /watchlist for movies)."""
+    """Show watchlist — same shared filter component as everything else."""
     limit = views._page_size()
-    api_kwargs = dict(_show_watchlist_kwargs(params))
+    api_kwargs = dict(views._filter_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/show-watchlist", **api_kwargs)
     xbmcplugin.setPluginCategory(handle, "Show Watchlist")
     xbmcplugin.setContent(handle, "tvshows")
 
-    current = dict(_show_watchlist_kwargs(params))
+    current = dict(views._filter_kwargs(params))
     views._add_filter_entries(handle, "show_watchlist", current, views._WATCHLIST_SORTS)
 
     items = data.get("items") or []
