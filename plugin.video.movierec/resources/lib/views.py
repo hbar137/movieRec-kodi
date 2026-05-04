@@ -470,13 +470,16 @@ def _row_value(field, state, sort_options, target_action="browse"):
         return state.get("rating_min") or "any"
     if field == "watched":
         return _WATCHED_LABELS.get(state.get("watched"), "any")
+    if field == "rd":
+        return "yes" if state.get("rd_available") == "true" else "no"
     return ""
 
 
 # Single source of truth for the keys a "Clear all" sweep needs to drop.
 # Mirrors the field set in _FILTER_FIELDS — keep them in sync.
 _FILTER_STATE_KEYS = ("sort", "genre", "language", "country",
-                      "year_min", "year_max", "rating_min", "watched")
+                      "year_min", "year_max", "rating_min", "watched",
+                      "rd_available")
 
 
 def _has_active_filters(state):
@@ -514,6 +517,14 @@ def set_filter(handle, target_action, field, current):
             state.pop("watched", None)
         else:
             state["watched"] = "true"
+
+    elif field == "rd":
+        # Two-state toggle (yes / no). RD-only is the common case; the
+        # negative form is rarely useful, so a flat toggle is enough.
+        if state.get("rd_available") == "true":
+            state.pop("rd_available", None)
+        else:
+            state["rd_available"] = "true"
 
     elif field == "sort":
         labels = ["(default)"] + [lbl for _, lbl in sort_options]
@@ -629,6 +640,7 @@ _FILTER_FIELDS = [
     ("year",     "Year"),
     ("rating",   "Min IMDB"),
     ("watched",  "Watched"),
+    ("rd",       "Real-Debrid"),
 ]
 
 
@@ -695,7 +707,8 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, upd
 # but with year split into min/max and tag kept as a passthrough (no UI row
 # yet — Trakt list tags are exposed via a separate menu in the future).
 _FILTER_KEYS = ("sort", "genre", "language", "country",
-                "year_min", "year_max", "rating_min", "watched", "tag")
+                "year_min", "year_max", "rating_min", "watched",
+                "rd_available", "tag")
 
 
 def _filter_kwargs(params):
