@@ -28,10 +28,6 @@ def dispatch(argv):
             views.history(handle, page=int(params.get("page", "0")))
         elif action == "browse":
             views.browse(handle, page=int(params.get("page", "0")), params=params)
-        elif action == "browse_menu":
-            views.browse_menu(handle)
-        elif action == "genres":
-            views.genres(handle)
         elif action == "set_filter":
             target = params.pop("target", "browse")
             field = params.pop("field", "")
@@ -55,8 +51,6 @@ def dispatch(argv):
         elif action == "resolve_links":
             views.resolve_links(handle, int(params["movie_id"]))
         # Show / episode actions
-        elif action == "shows_root":
-            views.shows_root(handle)
         elif action == "shows_browse":
             views_shows.shows_browse(handle, page=int(params.get("page", "0")), params=params)
         elif action == "show_watchlist":
@@ -80,6 +74,18 @@ def dispatch(argv):
                                         int(params["episode_id"]),
                                         int(params["show_id"]),
                                         int(params["season"]))
+        elif action == "search_shows":
+            views_shows.search_shows(handle)
+        elif action == "search_shows_new":
+            views_shows.search_shows_new(handle)
+        elif action == "search_shows_clear":
+            views_shows.search_shows_clear(handle)
+        elif action == "search_shows_results":
+            views_shows.search_shows_results(handle, params.get("q", ""))
+        elif action == "import_show":
+            views_shows.import_show(handle, int(params["show_id"]))
+        elif action == "show_history":
+            views_shows.show_history(handle, page=int(params.get("page", "0")))
         else:
             views.root(handle)
     except api.APIError as e:

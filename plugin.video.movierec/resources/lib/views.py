@@ -14,16 +14,19 @@ from . import api
 
 ADDON = xbmcaddon.Addon()
 
-_SEARCH_HISTORY_FILE = os.path.join(
-    xbmcvfs.translatePath("special://profile/addon_data/plugin.video.movierec/"),
-    "search_history.json",
-)
+_SEARCH_HISTORY_DIR = xbmcvfs.translatePath(
+    "special://profile/addon_data/plugin.video.movierec/")
 _SEARCH_HISTORY_MAX = 20
 
 
-def _load_search_history():
+def _search_history_path(kind):
+    # Per-kind history files so movie + show searches don't pollute each other.
+    return os.path.join(_SEARCH_HISTORY_DIR, "search_history_%s.json" % kind)
+
+
+def _load_search_history(kind):
     try:
-        with open(_SEARCH_HISTORY_FILE, "r", encoding="utf-8") as f:
+        with open(_search_history_path(kind), "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
             return [str(q) for q in data if q]
@@ -32,30 +35,29 @@ def _load_search_history():
     return []
 
 
-def _save_search_history(history):
-    d = os.path.dirname(_SEARCH_HISTORY_FILE)
+def _save_search_history(kind, history):
     try:
-        os.makedirs(d, exist_ok=True)
-        with open(_SEARCH_HISTORY_FILE, "w", encoding="utf-8") as f:
+        os.makedirs(_SEARCH_HISTORY_DIR, exist_ok=True)
+        with open(_search_history_path(kind), "w", encoding="utf-8") as f:
             json.dump(history[:_SEARCH_HISTORY_MAX], f, ensure_ascii=False)
     except OSError:
         pass
 
 
-def _record_search(query):
+def _record_search(kind, query):
     q = (query or "").strip()
     if not q:
         return
-    history = _load_search_history()
+    history = _load_search_history(kind)
     # MRU: drop any case-insensitive duplicate, prepend the new query.
     history = [h for h in history if h.lower() != q.lower()]
     history.insert(0, q)
-    _save_search_history(history)
+    _save_search_history(kind, history)
 
 
-def _clear_search_history():
+def _clear_search_history(kind):
     try:
-        os.remove(_SEARCH_HISTORY_FILE)
+        os.remove(_search_history_path(kind))
     except OSError:
         pass
 
@@ -283,13 +285,19 @@ def _movie_listitem(movie, rating=None, watched=False, rd_available=False):
 def root(handle):
     xbmcplugin.setPluginCategory(handle, "movieRec")
     xbmcplugin.setContent(handle, "files")
+    # Movies first, shows after — keep parallel ordering inside each block
+    # (Watchlist, Browse, Search, History) so the user's eye can jump between
+    # the matching pair across kinds.
     items = [
         ("Dashboard", _url(action="dashboard")),
-        ("Watchlist", _url(action="watchlist")),
-        ("Shows", _url(action="shows_root")),
-        ("History", _url(action="history")),
-        ("Browse", _url(action="browse_menu")),
-        ("Search", _url(action="search")),
+        ("Movie Watchlist", _url(action="watchlist")),
+        ("Movie Browse", _url(action="browse")),
+        ("Movie Search", _url(action="search")),
+        ("Movie History", _url(action="history")),
+        ("Show Watchlist", _url(action="show_watchlist")),
+        ("Show Browse", _url(action="shows_browse")),
+        ("Show Search", _url(action="search_shows")),
+        ("Show History", _url(action="show_history")),
     ]
     for label, url in items:
         li = xbmcgui.ListItem(label=label)
@@ -394,22 +402,50 @@ _LANGUAGE_NAMES_CACHE = {}
 _COUNTRY_NAMES_CACHE = {}
 
 
+def _is_show_action(target_action):
+    return target_action in ("shows_browse", "show_watchlist")
+
+
+def _filter_endpoint(field, target_action):
+    """Resolve which API endpoint backs a filter dropdown for the given field
+    and target view, plus the scope query param to send (so the dropdown only
+    surfaces values that exist within the user's current view)."""
+    show = _is_show_action(target_action)
+    scope = "watchlist" if target_action in ("watchlist", "show_watchlist") else ""
+    if field == "genre":
+        return ("/show-genres" if show else "/genres"), scope
+    if field == "language":
+        return ("/show-languages" if show else "/languages"), scope
+    if field == "country":
+        return ("/show-countries" if show else "/countries"), scope
+    return None, ""
+
+
 def _code_name_lookup(field, target_action):
-    """Fetch /languages or /countries for the given scope, returning
-    (items, name_by_code). Both are cached per (field, scope) within the
-    process so back-and-forth between filter rows doesn't re-hit the API."""
+    """Fetch the languages/countries endpoint for the right kind+scope,
+    cached per (field, target) so back-and-forth between filter rows doesn't
+    re-hit the API."""
     cache = _LANGUAGE_NAMES_CACHE if field == "language" else _COUNTRY_NAMES_CACHE
     key = target_action
     if key in cache:
         return cache[key]
-    path = "/languages" if field == "language" else "/countries"
+    path, scope = _filter_endpoint(field, target_action)
     try:
-        items = api.get(path, scope=target_action) or []
+        items = api.get(path, scope=scope) if scope else api.get(path)
+        items = items or []
     except api.APIError:
         items = []
     name_by_code = {it.get("code"): it.get("name") or it.get("code") for it in items}
     cache[key] = (items, name_by_code)
     return items, name_by_code
+
+
+_WATCHED_LABELS = {"true": "watched", "false": "unwatched"}
+_STATUS_LABELS = {
+    "not_started": "not started",
+    "started": "in progress",
+    "completed": "completed",
+}
 
 
 def _row_value(field, state, sort_options, target_action="browse"):
@@ -439,13 +475,18 @@ def _row_value(field, state, sort_options, target_action="browse"):
         return state.get("rating_min") or "any"
     if field == "rd":
         return "yes" if state.get("rd_available") == "true" else "no"
+    if field == "watched":
+        return _WATCHED_LABELS.get(state.get("watched"), "any")
+    if field == "status":
+        return _STATUS_LABELS.get(state.get("status"), "any")
     return ""
 
 
 def _has_active_filters(state):
     return any(state.get(k) for k in
                ("sort", "genre", "language", "country",
-                "year_min", "year_max", "rating_min", "rd_available"))
+                "year_min", "year_max", "rating_min", "rd_available",
+                "watched", "status"))
 
 
 def set_filter(handle, target_action, field, current):
@@ -455,7 +496,10 @@ def set_filter(handle, target_action, field, current):
     set_filter and reopens the picker dialog."""
     dlg = xbmcgui.Dialog()
     state = dict(current)
-    sort_options = _WATCHLIST_SORTS if target_action == "watchlist" else _BROWSE_SORTS
+    if target_action in ("watchlist", "show_watchlist"):
+        sort_options = _WATCHLIST_SORTS
+    else:
+        sort_options = _BROWSE_SORTS
 
     # Drop transient keys before mutating
     state.pop("page", None)
@@ -471,6 +515,31 @@ def set_filter(handle, target_action, field, current):
             state.pop("rd_available", None)
         else:
             state["rd_available"] = "true"
+
+    elif field == "watched":
+        # Three-state: any → watched → unwatched → any. Pop key for "any" so
+        # the URL stays clean.
+        cur = state.get("watched")
+        if cur == "true":
+            state["watched"] = "false"
+        elif cur == "false":
+            state.pop("watched", None)
+        else:
+            state["watched"] = "true"
+
+    elif field == "status":
+        opts = [("", "(any)"),
+                ("not_started", "Not started"),
+                ("started", "In progress"),
+                ("completed", "Completed")]
+        labels = [lbl for _, lbl in opts]
+        cur = state.get("status") or ""
+        preselect = next((i for i, (k, _) in enumerate(opts) if k == cur), 0)
+        i = dlg.select("Status", labels, preselect=preselect)
+        if i == 0:
+            state.pop("status", None)
+        elif i > 0:
+            state["status"] = opts[i][0]
 
     elif field == "sort":
         labels = ["(default)"] + [lbl for _, lbl in sort_options]
@@ -489,10 +558,11 @@ def set_filter(handle, target_action, field, current):
 
     elif field == "genre":
         # Scope the dropdown to the current view so the user only sees genres
-        # that actually have movies behind them (avoids picking e.g. Drama in
-        # a watchlist where no watchlisted movie carries that genre).
+        # that actually have items behind them (avoids picking e.g. Drama in
+        # a watchlist where nothing watchlisted carries that genre).
+        path, scope = _filter_endpoint("genre", target_action)
         try:
-            genres = api.get("/genres", scope=target_action) or []
+            genres = (api.get(path, scope=scope) if scope else api.get(path)) or []
         except api.APIError:
             genres = []
         labels = ["(any)"] + list(genres)
@@ -507,12 +577,12 @@ def set_filter(handle, target_action, field, current):
             state["genre"] = genres[i - 1]
 
     elif field in ("language", "country"):
-        # Re-fetch fresh (don't reuse the row-render cache) so a newly added
-        # movie shows up in the dropdown without restarting Kodi.
-        path = "/languages" if field == "language" else "/countries"
+        # Re-fetch fresh (don't reuse the row-render cache) so newly added
+        # items show up in the dropdown without restarting Kodi.
+        path, scope = _filter_endpoint(field, target_action)
         title = "Language" if field == "language" else "Country"
         try:
-            items = api.get(path, scope=target_action) or []
+            items = (api.get(path, scope=scope) if scope else api.get(path)) or []
         except api.APIError:
             items = []
         codes = [it.get("code") for it in items]
@@ -557,8 +627,15 @@ def set_filter(handle, target_action, field, current):
     # honored, back from a movie detail lands on the filtered listing; if it's
     # dropped, the visible filter still applied — we just regress to "back
     # reopens the dialog" instead of breaking the filter.
+    # Late import — views_shows imports views, so importing it at module
+    # load time would deadlock.
+    from . import views_shows
     if target_action == "watchlist":
         watchlist(handle, page=0, params=state, update_listing=True)
+    elif target_action == "shows_browse":
+        views_shows.shows_browse(handle, page=0, params=state, update_listing=True)
+    elif target_action == "show_watchlist":
+        views_shows.show_watchlist_view(handle, page=0, params=state, update_listing=True)
     else:
         browse(handle, page=0, params=state, update_listing=True)
 
@@ -566,15 +643,27 @@ def set_filter(handle, target_action, field, current):
     xbmc.executebuiltin("Container.Update(%s,replace)" % target_url)
 
 
-_FILTER_FIELDS = [
+_BASE_FILTER_FIELDS = [
     ("sort",     "Sort"),
     ("genre",    "Genre"),
     ("language", "Language"),
     ("country",  "Country"),
     ("year",     "Year"),
     ("rating",   "Min IMDB"),
-    ("rd",       "Real-Debrid"),
 ]
+
+
+def _filter_fields_for(action):
+    fields = list(_BASE_FILTER_FIELDS)
+    # `watched` is meaningful on the all-items browse views (movies + shows).
+    # The watchlist views use their own status semantics.
+    if action in ("browse", "shows_browse"):
+        fields.append(("watched", "Watched"))
+    if action == "browse":
+        fields.append(("rd", "Real-Debrid"))
+    if action == "show_watchlist":
+        fields.append(("status", "Status"))
+    return fields
 
 
 def _add_filter_entries(handle, action, current, sort_options):
@@ -588,7 +677,7 @@ def _add_filter_entries(handle, action, current, sort_options):
     base = {k: v for k, v in current.items() if k != "action"}
     icon = "DefaultAddonsSearch.png"
 
-    for field, label in _FILTER_FIELDS:
+    for field, label in _filter_fields_for(action):
         value = _row_value(field, current, sort_options, target_action=action)
         row_label = "[COLOR cyan]» %s:[/COLOR] [COLOR yellow]%s[/COLOR]" % (label, value)
         li = xbmcgui.ListItem(label=row_label)
@@ -637,7 +726,8 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, upd
 
 
 _FILTER_KEYS = ("sort", "genre", "language", "country",
-                "year_min", "year_max", "rating_min", "rd_available")
+                "year_min", "year_max", "rating_min", "rd_available",
+                "watched", "status", "tag")
 
 
 def _filter_kwargs(params):
@@ -677,40 +767,6 @@ def history(handle, page=0):
     _paged_list(handle, data, "entries", get_movie, page, {"action": "history"})
 
 
-def shows_root(handle):
-    xbmcplugin.setPluginCategory(handle, "Shows")
-    items = [
-        ("All shows", _url(action="shows_browse")),
-        ("Show watchlist", _url(action="show_watchlist")),
-    ]
-    for label, url in items:
-        li = xbmcgui.ListItem(label=label)
-        li.setArt({"icon": "DefaultFolder.png"})
-        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
-    xbmcplugin.endOfDirectory(handle)
-
-
-def browse_menu(handle):
-    xbmcplugin.setPluginCategory(handle, "Browse")
-    items = [
-        ("All movies", _url(action="browse")),
-        ("By genre", _url(action="genres")),
-    ]
-    for label, url in items:
-        li = xbmcgui.ListItem(label=label)
-        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
-    xbmcplugin.endOfDirectory(handle)
-
-
-def genres(handle):
-    data = api.get("/genres") or []
-    xbmcplugin.setPluginCategory(handle, "Genres")
-    for g in data:
-        li = xbmcgui.ListItem(label=g)
-        xbmcplugin.addDirectoryItem(handle, _url(action="browse", genre=g), li, isFolder=True)
-    xbmcplugin.endOfDirectory(handle)
-
-
 def browse(handle, page, params, update_listing=False):
     limit = _page_size()
     api_kwargs = dict(_filter_kwargs(params))
@@ -727,10 +783,8 @@ def browse(handle, page, params, update_listing=False):
 
 
 def search(handle):
-    """Show 'New search…' prompt + past searches as a directory listing.
-    Picking a past query re-runs it; picking 'New search…' opens the input
-    dialog and records the result."""
-    xbmcplugin.setPluginCategory(handle, "Search")
+    """Movie search root: 'New search…' + past movie searches."""
+    xbmcplugin.setPluginCategory(handle, "Movie Search")
     xbmcplugin.setContent(handle, "files")
 
     new_li = xbmcgui.ListItem(label="[B]» New search…[/B]")
@@ -738,7 +792,7 @@ def search(handle):
     new_li.setProperty("SpecialSort", "top")
     xbmcplugin.addDirectoryItem(handle, _url(action="search_new"), new_li, isFolder=True)
 
-    history = _load_search_history()
+    history = _load_search_history("movies")
     if history:
         sep = xbmcgui.ListItem(label="[B]── Past searches ──[/B]")
         sep.setProperty("SpecialSort", "top")
@@ -759,34 +813,33 @@ def search(handle):
 
 
 def search_new(handle):
-    """Pop the input dialog, record the query, and render results."""
-    kb = xbmcgui.Dialog().input("Search movieRec", type=xbmcgui.INPUT_ALPHANUM)
+    """Pop the input dialog, record the query, and render movie results."""
+    kb = xbmcgui.Dialog().input("Search movies", type=xbmcgui.INPUT_ALPHANUM)
     if not kb:
         xbmcplugin.endOfDirectory(handle, succeeded=False)
         return
-    _record_search(kb)
+    _record_search("movies", kb)
     search_results(handle, kb)
 
 
 def search_clear(handle):
-    """Confirm + clear search history, then redraw the search root."""
+    """Confirm + clear movie search history, then redraw the search root."""
     if xbmcgui.Dialog().yesno("Search history",
-                              "Clear all saved searches?",
+                              "Clear all saved movie searches?",
                               nolabel="Cancel", yeslabel="Clear"):
-        _clear_search_history()
-    # Re-render the search root in place so the user sees the cleared state.
+        _clear_search_history("movies")
     xbmc.executebuiltin("Container.Update(%s,replace)" % _url(action="search"))
     xbmcplugin.endOfDirectory(handle, succeeded=False)
 
 
 def search_results(handle, query):
-    """Combined local + TMDB search. Local hits render first; TMDB-only hits
+    """Movie-only search results. Local hits render first; TMDB-only hits
     render below a section header. Clicking a TMDB-only hit triggers an
     import-then-open flow (see `import_movie`)."""
     if not query:
         xbmcplugin.endOfDirectory(handle, succeeded=False)
         return
-    _record_search(query)
+    _record_search("movies", query)
 
     try:
         data = api.get("/search", q=query) or {}
@@ -798,7 +851,7 @@ def search_results(handle, query):
     local = data.get("local") or []
     tmdb_only = data.get("tmdb") or []
 
-    xbmcplugin.setPluginCategory(handle, "Search: %s" % query)
+    xbmcplugin.setPluginCategory(handle, "Movie Search: %s" % query)
     xbmcplugin.setContent(handle, "movies")
 
     if not local and not tmdb_only:

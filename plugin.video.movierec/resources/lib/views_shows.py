@@ -72,18 +72,26 @@ def _show_listitem(show, ratings=None, watched=False, on_watchlist=False, progre
     return li
 
 
+_SHOW_BROWSE_KEYS = ("sort", "genre", "language", "country",
+                     "year_min", "year_max", "rating_min", "watched")
+
+
+def _show_browse_kwargs(params):
+    return {k: params[k] for k in _SHOW_BROWSE_KEYS if params.get(k)}
+
+
 def shows_browse(handle, page, params, update_listing=False):
     """Mirror of views.browse but for shows."""
     limit = views._page_size()
-    api_kwargs = {k: params[k] for k in
-                  ("sort", "genre", "language", "country",
-                   "year_min", "year_max", "rating_min", "watched", "watchlist")
-                  if params.get(k)}
+    api_kwargs = dict(_show_browse_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/shows", **api_kwargs)
     xbmcplugin.setPluginCategory(handle, params.get("genre") or "Shows")
     xbmcplugin.setContent(handle, "tvshows")
+
+    current = dict(_show_browse_kwargs(params))
+    views._add_filter_entries(handle, "shows_browse", current, views._BROWSE_SORTS)
 
     items = data.get("shows") or []
     total = data.get("total") or 0
@@ -104,28 +112,33 @@ def shows_browse(handle, page, params, update_listing=False):
 
     if (page + 1) * limit < total:
         kwargs = dict(action="shows_browse", page=page + 1)
-        for k in ("sort", "genre", "language", "country",
-                  "year_min", "year_max", "rating_min", "watched", "watchlist"):
-            if params.get(k):
-                kwargs[k] = params[k]
+        kwargs.update(current)
         next_li = xbmcgui.ListItem(label="Next page →")
         xbmcplugin.addDirectoryItem(handle, _url(**kwargs), next_li, isFolder=True)
 
     xbmcplugin.endOfDirectory(handle, updateListing=update_listing, cacheToDisc=False)
 
 
+_SHOW_WATCHLIST_KEYS = ("sort", "genre", "language", "country", "tag",
+                        "year_min", "year_max", "rating_min", "status")
+
+
+def _show_watchlist_kwargs(params):
+    return {k: params[k] for k in _SHOW_WATCHLIST_KEYS if params.get(k)}
+
+
 def show_watchlist_view(handle, page, params, update_listing=False):
     """Show watchlist (mirror of /watchlist for movies)."""
     limit = views._page_size()
-    api_kwargs = {k: params[k] for k in
-                  ("sort", "genre", "language", "country", "tag",
-                   "year_min", "year_max", "rating_min", "status")
-                  if params.get(k)}
+    api_kwargs = dict(_show_watchlist_kwargs(params))
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/show-watchlist", **api_kwargs)
     xbmcplugin.setPluginCategory(handle, "Show Watchlist")
     xbmcplugin.setContent(handle, "tvshows")
+
+    current = dict(_show_watchlist_kwargs(params))
+    views._add_filter_entries(handle, "show_watchlist", current, views._WATCHLIST_SORTS)
 
     items = data.get("items") or []
     total = data.get("total") or 0
@@ -146,10 +159,7 @@ def show_watchlist_view(handle, page, params, update_listing=False):
 
     if (page + 1) * limit < total:
         kwargs = dict(action="show_watchlist", page=page + 1)
-        for k in ("sort", "genre", "language", "country", "tag",
-                  "year_min", "year_max", "rating_min", "status"):
-            if params.get(k):
-                kwargs[k] = params[k]
+        kwargs.update(current)
         next_li = xbmcgui.ListItem(label="Next page →")
         xbmcplugin.addDirectoryItem(handle, _url(**kwargs), next_li, isFolder=True)
 
@@ -387,3 +397,184 @@ def resolve_episode(handle, episode_id, show_id, season):
     target = _url(action="season", show_id=show_id, season=season)
     xbmc.executebuiltin("Container.Update(%s,replace)" % target)
     xbmcplugin.endOfDirectory(handle, succeeded=False)
+
+
+# ---------------------------------------------------------------------------
+# Search (shows)
+# ---------------------------------------------------------------------------
+
+
+def search_shows(handle):
+    """Show search root: 'New search…' + past show searches."""
+    xbmcplugin.setPluginCategory(handle, "Show Search")
+    xbmcplugin.setContent(handle, "files")
+
+    new_li = xbmcgui.ListItem(label="[B]» New search…[/B]")
+    new_li.setArt({"icon": "DefaultAddonsSearch.png"})
+    new_li.setProperty("SpecialSort", "top")
+    xbmcplugin.addDirectoryItem(handle, _url(action="search_shows_new"), new_li, isFolder=True)
+
+    history = views._load_search_history("shows")
+    if history:
+        sep = xbmcgui.ListItem(label="[B]── Past searches ──[/B]")
+        sep.setProperty("SpecialSort", "top")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search_shows"), sep, isFolder=False)
+
+        for q in history:
+            li = xbmcgui.ListItem(label=q)
+            li.setArt({"icon": "DefaultAddonsSearch.png"})
+            xbmcplugin.addDirectoryItem(handle,
+                                        _url(action="search_shows_results", q=q),
+                                        li, isFolder=True)
+
+        clear_li = xbmcgui.ListItem(label="[COLOR red]» Clear search history[/COLOR]")
+        clear_li.setArt({"icon": "DefaultAddonsSearch.png"})
+        xbmcplugin.addDirectoryItem(handle, _url(action="search_shows_clear"), clear_li, isFolder=True)
+
+    xbmcplugin.endOfDirectory(handle)
+
+
+def search_shows_new(handle):
+    kb = xbmcgui.Dialog().input("Search shows", type=xbmcgui.INPUT_ALPHANUM)
+    if not kb:
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+    views._record_search("shows", kb)
+    search_shows_results(handle, kb)
+
+
+def search_shows_clear(handle):
+    if xbmcgui.Dialog().yesno("Search history",
+                              "Clear all saved show searches?",
+                              nolabel="Cancel", yeslabel="Clear"):
+        views._clear_search_history("shows")
+    xbmc.executebuiltin("Container.Update(%s,replace)" % _url(action="search_shows"))
+    xbmcplugin.endOfDirectory(handle, succeeded=False)
+
+
+def search_shows_results(handle, query):
+    """Show-only search results. Local hits render first; TMDB-only hits sit
+    below a separator and trigger import-then-open via `import_show`."""
+    if not query:
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+    views._record_search("shows", query)
+
+    try:
+        data = api.get("/search", q=query) or {}
+    except api.APIError as e:
+        api.handle_error(e)
+        xbmcplugin.endOfDirectory(handle, succeeded=False)
+        return
+
+    local = data.get("local_shows") or []
+    tmdb_only = data.get("tmdb_shows") or []
+
+    xbmcplugin.setPluginCategory(handle, "Show Search: %s" % query)
+    xbmcplugin.setContent(handle, "tvshows")
+
+    if not local and not tmdb_only:
+        li = xbmcgui.ListItem(label="(No matches)")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search_shows"), li, isFolder=False)
+        xbmcplugin.endOfDirectory(handle)
+        return
+
+    for s in local:
+        ratings = s.get("ratings")
+        watched = bool(s.get("watched"))
+        on_wl = bool(s.get("on_watchlist"))
+        li = _show_listitem(s, ratings=ratings, watched=watched, on_watchlist=on_wl)
+        url = _url(action="show", show_id=s["id"])
+        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+
+    if tmdb_only:
+        sep = xbmcgui.ListItem(label="[B]── More on TMDB ──[/B]")
+        xbmcplugin.addDirectoryItem(handle, _url(action="search_shows"), sep, isFolder=False)
+        for s in tmdb_only:
+            li = _show_listitem(s)
+            li.setLabel("[COLOR cyan][+TMDB][/COLOR] " + li.getLabel())
+            url = _url(action="import_show", show_id=s["id"])
+            xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+
+    xbmcplugin.endOfDirectory(handle)
+
+
+def import_show(handle, show_id):
+    """Import a TMDB-only show into the local DB, then jump to its detail
+    page. Used by search_shows_results' TMDB-only rows."""
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Importing from TMDB…")
+    try:
+        try:
+            api.post("/shows/import/%d" % show_id, _timeout=120)
+        except api.APIError as e:
+            api.handle_error(e)
+            xbmcplugin.endOfDirectory(handle, succeeded=False)
+            return
+    finally:
+        progress.close()
+    show_detail(handle, show_id)
+
+
+# ---------------------------------------------------------------------------
+# Episode history
+# ---------------------------------------------------------------------------
+
+
+def show_history(handle, page=0):
+    """Episode-level history (mirror of /history for movies). Each row is one
+    episode watch; clicking opens that show's detail page."""
+    limit = views._page_size()
+    data = api.get("/show-history", page=page, limit=limit)
+    xbmcplugin.setPluginCategory(handle, "Show History")
+    xbmcplugin.setContent(handle, "episodes")
+
+    entries = data.get("entries") or []
+    total = data.get("total") or 0
+    ratings = data.get("ratings") or {}
+
+    for e in entries:
+        ep = e.get("episode") or {}
+        sh = e.get("show") or {}
+        sid = e.get("show_id") or sh.get("id")
+        s_num = ep.get("season_number") or 0
+        e_num = ep.get("episode_number") or 0
+        ep_title = ep.get("name") or ""
+        watched_at = (e.get("watched_at") or "")[:10]
+        prefix = "S%02dE%02d" % (s_num, e_num)
+        label = "%s — %s %s" % (sh.get("title") or "?", prefix, ep_title)
+        if watched_at:
+            label = "[COLOR gray]%s[/COLOR]  %s" % (watched_at, label)
+
+        li = xbmcgui.ListItem(label=label)
+        still = _still_url(ep.get("still_path") or sh.get("poster_path"))
+        poster = _poster_url(sh.get("poster_path"))
+        fanart = _poster_url(sh.get("backdrop_path") or sh.get("poster_path"))
+        li.setArt({"thumb": still, "poster": poster, "fanart": fanart})
+        info = {
+            "tvshowtitle": sh.get("title") or "",
+            "title": ep_title,
+            "season": s_num,
+            "episode": e_num,
+            "aired": ep.get("air_date") or "",
+            "plot": ep.get("overview") or "",
+            "mediatype": "episode",
+        }
+        if sh.get("imdb_id"):
+            info["imdbnumber"] = sh["imdb_id"]
+        li.setInfo("video", info)
+        # Attach show-level ratings to keep parity with the movie history view.
+        r = ratings.get(str(sid)) or ratings.get(sid)
+        if r:
+            views._attach_ratings(li, sh, r)
+
+        url = _url(action="show", show_id=sid) if sid else _url(action="show_history")
+        xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+
+    if (page + 1) * limit < total:
+        next_li = xbmcgui.ListItem(label="Next page →")
+        xbmcplugin.addDirectoryItem(handle,
+                                    _url(action="show_history", page=page + 1),
+                                    next_li, isFolder=True)
+
+    xbmcplugin.endOfDirectory(handle)
