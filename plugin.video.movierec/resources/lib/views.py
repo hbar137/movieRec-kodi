@@ -294,10 +294,12 @@ def root(handle):
         ("Movie Browse", _url(action="browse")),
         ("Movie Search", _url(action="search")),
         ("Movie History", _url(action="history")),
-        ("Show Watchlist", _url(action="show_watchlist")),
-        ("Show Browse", _url(action="shows_browse")),
+        ("Show Watchlist", _url(action="show_watchlist", kind="show")),
+        ("Show Browse", _url(action="shows_browse", kind="show")),
         ("Show Search", _url(action="search_shows")),
         ("Show History", _url(action="show_history")),
+        ("Anime Watchlist", _url(action="show_watchlist", kind="anime")),
+        ("Anime Browse", _url(action="shows_browse", kind="anime")),
     ]
     for label, url in items:
         li = xbmcgui.ListItem(label=label)
@@ -708,7 +710,7 @@ def _paged_list(handle, response, items_key, get_movie, page, action_kwargs, upd
 # yet — Trakt list tags are exposed via a separate menu in the future).
 _FILTER_KEYS = ("sort", "genre", "language", "country",
                 "year_min", "year_max", "rating_min", "watched",
-                "rd_available", "tag")
+                "rd_available", "tag", "kind")
 
 
 def _filter_kwargs(params):

@@ -80,7 +80,8 @@ def shows_browse(handle, page, params, update_listing=False):
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/shows", **api_kwargs)
-    xbmcplugin.setPluginCategory(handle, params.get("genre") or "Shows")
+    label = "Anime" if params.get("kind") == "anime" else "Shows"
+    xbmcplugin.setPluginCategory(handle, params.get("genre") or label)
     xbmcplugin.setContent(handle, "tvshows")
 
     current = dict(views._filter_kwargs(params))
@@ -119,7 +120,8 @@ def show_watchlist_view(handle, page, params, update_listing=False):
     api_kwargs.update({"page": page, "limit": limit})
 
     data = api.get("/show-watchlist", **api_kwargs)
-    xbmcplugin.setPluginCategory(handle, "Show Watchlist")
+    cat = "Anime Watchlist" if params.get("kind") == "anime" else "Show Watchlist"
+    xbmcplugin.setPluginCategory(handle, cat)
     xbmcplugin.setContent(handle, "tvshows")
 
     current = dict(views._filter_kwargs(params))
