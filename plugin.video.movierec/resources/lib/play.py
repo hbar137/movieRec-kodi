@@ -441,102 +441,6 @@ def _select_japanese_audio():
             return
 
 
-def _chapter_offsets():
-    """Return (status, [chapter_start_seconds]) read via Player.Chapters infolabel.
-
-    JSON-RPC chapter access (Player.GetChapters method) was only added on
-    Kodi master 2025-12-06 and is not in any released Kodi (Omega/Nexus).
-    The infolabel route works since v19.
-
-    Player.Chapters is a CSV of "start%,end%,start%,end%,..." per chapter,
-    each percentage of total duration. Source:
-      xbmc/guilib/guiinfo/PlayerGUIInfo.cpp::GetChapters
-    Same source the Estuary OSD seek bar uses to draw chapter ticks.
-
-    Chapter data populates asynchronously after playback starts (the
-    demuxer state loop fills it in DataCacheCore — see
-    VideoPlayer.cpp::SetChapters), so we poll for up to ~10s.
-    """
-    csv = ""
-    cc = 0
-    for _ in range(20):  # 20 * 500ms = 10s
-        csv = xbmc.getInfoLabel("Player.Chapters") or ""
-        try:
-            cc = int(xbmc.getInfoLabel("Player.ChapterCount") or "0")
-        except Exception:
-            cc = 0
-        if csv:
-            break
-        xbmc.sleep(500)
-
-    if not csv:
-        return ("none|cc=%d" % cc, [])
-    try:
-        nums = [float(x) for x in csv.split(",") if x.strip()]
-    except ValueError:
-        return ("err:parse|cc=%d|csv=%s" % (cc, csv[:60]), [])
-    if len(nums) < 2 or len(nums) % 2 != 0:
-        return ("err:badlen=%d|cc=%d" % (len(nums), cc), [])
-    try:
-        total = int(xbmc.Player().getTotalTime() or 0)
-    except RuntimeError:
-        total = 0
-    if total <= 0:
-        return ("err:nototal|cc=%d" % cc, [])
-    # CSV layout: pairs of (range_start%, range_end%). Each pair is one
-    # chapter's span: range_start = this chapter's start, range_end =
-    # next chapter's start. Kodi SKIPS emitting the first chapter when it
-    # starts at 0% (see PlayerGUIInfo.cpp `if (marker != 0.0f)`), so for
-    # N chapters with ch1 at 0 there are N-1 ranges and the very last
-    # value in the CSV is the start of chapter N — which `nums[0::2]`
-    # alone would miss. Take ALL boundary values, dedupe, sort.
-    raw_sec = [p * total / 100.0 for p in nums]
-    # Collapse near-duplicates (≤2s apart) so a sub-second title-card
-    # chapter doesn't fold into the next real chapter's bucket.
-    offs = []
-    for s in sorted(raw_sec):
-        i = int(round(s))
-        if not offs or i - offs[-1] > 2:
-            offs.append(i)
-    if not offs:
-        return ("none|cc=%d" % cc, [])
-    return ("ok|cc=%d" % cc, offs)
-
-
-def _chapter_intro(offs):
-    """Pick (start, end) for the intro song from chapter offsets, else None.
-
-    Heuristic: ch2 is the intro song, so intro = [offs[1], offs[2]).
-    Sanity: intro must start within first 5 min, last 30s–3min.
-    """
-    if len(offs) < 4:
-        return None
-    start, end = offs[1], offs[2]
-    if start > 300 or end <= start:
-        return None
-    dur = end - start
-    if dur < 30 or dur > 180:
-        return None
-    return (start, end)
-
-
-def _chapter_outro(offs, total):
-    """Pick (start, end) for the outro song from chapter offsets, else None.
-
-    Heuristic: second-to-last chapter is the outro, outro = [offs[-2], offs[-1]).
-    Sanity: outro must start within last 5 min, last 30s–3min.
-    """
-    if len(offs) < 4 or total <= 0:
-        return None
-    start, end = offs[-2], offs[-1]
-    if start < total - 300 or end <= start:
-        return None
-    dur = end - start
-    if dur < 30 or dur > 180:
-        return None
-    return (start, end)
-
-
 def _anime_skip_watcher(show_id, episode_number):
     """Port of Otaku's ui/player.py _handle_skip_intro +
     _handle_outro_and_playing_next combined into one watcher thread.
@@ -571,73 +475,27 @@ def _anime_skip_watcher(show_id, episode_number):
     else:
         return
 
-    # Chapter offsets are stable once playback starts; query once and reuse
-    # for both intro and outro fallback paths.
-    if not aniskip_intro or not aniskip_outro:
-        ch_status, chapters = _chapter_offsets()
-    else:
-        ch_status, chapters = "skipped", []
-    try:
-        total_time = int(player.getTotalTime() or 0)
-    except RuntimeError:
-        total_time = 0
-
     # ── Intro window (Otaku _handle_skip_intro) ──
-    intro_source = "aniskip"
     if aniskip_intro and aniskip_intro.get("end"):
         intro_start = int(aniskip_intro.get("start") or 0)
         intro_end   = int(aniskip_intro["end"])
         intro_is_aniskip = True
     else:
-        ch_intro = _chapter_intro(chapters)
-        if ch_intro:
-            intro_start, intro_end = ch_intro
-            intro_is_aniskip = True  # absolute seek to chapter-derived end
-            intro_source = "chapter"
-        else:
-            intro_start = _ctl.getInt("skipintro.delay") or 1
-            intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
-            intro_is_aniskip = False
-            intro_source = "default"
+        intro_start = _ctl.getInt("skipintro.delay") or 1
+        intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
+        intro_is_aniskip = False
 
     # ── Outro / playing-next window (Otaku _handle_outro_and_playing_next) ──
     playnext_lead = _ctl.getInt("playingnext.time") or 30
     outro_end_aniskip = 0
-    outro_source = "aniskip"
     if aniskip_outro and aniskip_outro.get("start"):
         # When we have outro data, fire AT outro_start (matches Otaku)
         outro_start_t = int(aniskip_outro.get("start") or 0)
         outro_end_aniskip = int(aniskip_outro.get("end") or 0)
         playnext_kind = "outro"  # use skip_outro_default.xml
     else:
-        ch_outro = _chapter_outro(chapters, total_time)
-        if ch_outro:
-            outro_start_t, outro_end_aniskip = ch_outro
-            playnext_kind = "outro"  # chapter-derived end → Skip Outro button works
-            outro_source = "chapter"
-        else:
-            outro_start_t = 0
-            playnext_kind = "next"   # use playing_next_default.xml
-            outro_source = "default"
-
-    # ── One-shot diagnostic toast so the TV shows what we decided. ──
-    # ch_status is one of: "ok", "none", "skipped", "err:<msg>".
-    # Surfaces the actual mm:ss times so they can be eyeballed against the
-    # chapter markers visible in the OSD seek bar.
-    try:
-        def _hms(s):
-            s = int(s or 0)
-            return "%d:%02d" % (s // 60, s % 60)
-        ch_msg = "ch=%s(%d)" % (ch_status, len(chapters)) if chapters else "ch=%s" % ch_status
-        intro_msg = "%s@%s-%s" % (intro_source, _hms(intro_start), _hms(intro_end))
-        if outro_start_t:
-            outro_msg = "%s@%s-%s" % (outro_source, _hms(outro_start_t), _hms(outro_end_aniskip))
-        else:
-            outro_msg = "%s@%s" % (outro_source, _hms(max(total_time - playnext_lead, 0)))
-        msg = "%s | i:%s o:%s" % (ch_msg, intro_msg, outro_msg)
-        xbmcgui.Dialog().notification("movieRec skip", msg, time=20000, sound=False)
-    except Exception:
-        pass
+        outro_start_t = 0
+        playnext_kind = "next"   # use playing_next_default.xml
 
     intro_shown = False
     next_shown  = False
