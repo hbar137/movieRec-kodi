@@ -276,15 +276,26 @@ def season_detail(handle, show_id, season):
                 pass
         li.setInfo("video", info)
 
+        # Default click on the row → instant-play top resolved (or trigger
+        # resolve if none yet).  The "Pick a release..." context-menu
+        # entry (long-press / "C") fetches the full candidate list (Otaku
+        # parity) and lazy-resolves the user's pick. For anime shows
+        # specifically this matters: the server only pre-resolves the top
+        # 1 candidate to avoid tripping RD's per-account anti-probe — so
+        # the context menu is the way to access alternatives.
+        ctx_pick = (
+            "Pick a release...",
+            "RunPlugin(%s)" % _url(action="pick_release", episode_id=eid, show_id=show_id, season=season),
+        )
+        li.addContextMenuItems([ctx_pick])
+
         if ep_links:
-            # Pick best link by user preference and play it directly. The detail
-            # page is already a 10-foot UI; making the user pick again is noise.
             link = _pick_link(ep_links, pref)
             li.setProperty("IsPlayable", "true")
             url = _url(action="play_episode", link_id=link["id"], episode_id=eid, show_id=show_id)
             xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
         else:
-            # No resolved links yet — resolve, then play.
+            # No resolved links yet — resolve top, then play.
             url = _url(action="resolve_episode", episode_id=eid, show_id=show_id, season=season)
             xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
 
@@ -611,3 +622,119 @@ def show_history(handle, page=0):
                                     next_li, isFolder=True)
 
     xbmcplugin.endOfDirectory(handle)
+
+
+# ---------------------------------------------------------------------------
+# Pick a release (context-menu) — anime hybrid lazy-resolve
+# ---------------------------------------------------------------------------
+
+
+def _format_size_gb(b):
+    try:
+        n = int(b or 0)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    gb = n / (1024 ** 3)
+    if gb >= 1:
+        return "%.1f GB" % gb
+    return "%d MB" % (n // (1024 * 1024))
+
+
+def pick_release(handle, episode_id, show_id, season):
+    """Fetch the full candidate list (server runs Otaku-style pipeline:
+    scrape Nyaa + AT + Torrentio prefilter + DMM cache check + file-match
+    filter), show a select dialog, and on pick call /resolve-magnet to
+    addMagnet that ONE hash. Avoids RD's burst anti-probe by never
+    bursting addMagnet calls."""
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Fetching cached releases…")
+    try:
+        data = api.get("/realdebrid/episode-candidates/%d" % episode_id, _timeout=30)
+    except api.APIError as e:
+        progress.close()
+        api.handle_error(e)
+        return
+    progress.close()
+    candidates = (data or {}).get("candidates") or []
+    if not candidates:
+        xbmcgui.Dialog().notification("movieRec", "No cached releases found",
+                                       xbmcgui.NOTIFICATION_WARNING, 3500)
+        return
+
+    # Build human-readable labels — quality, size, source, title.
+    labels = []
+    for c in candidates:
+        q = c.get("quality") or "?"
+        src = (c.get("source_site") or "")[:11]
+        size = _format_size_gb(c.get("size_bytes"))
+        seeders = c.get("seeders") or 0
+        title = (c.get("title") or "").split("\n", 1)[0][:75]
+        tag = "[COLOR green]●[/COLOR] " if c.get("already_resolved") else ""
+        parts = ["[%s]" % q]
+        if size:
+            parts.append(size)
+        if src:
+            parts.append("(%s)" % src)
+        if seeders > 0:
+            parts.append("👤%d" % seeders)
+        labels.append("%s%s %s" % (tag, " ".join(parts), title))
+
+    idx = xbmcgui.Dialog().select("Pick a release", labels)
+    if idx < 0:
+        return
+    chosen = candidates[idx]
+    hash_ = chosen.get("hash") or ""
+    if not hash_:
+        return
+
+    # If already resolved, jump straight to play — no addMagnet round-trip.
+    if chosen.get("already_resolved"):
+        # The existing /season endpoint embeds resolved links keyed by
+        # episode id; refresh the season view + auto-play not trivial
+        # here, so instead call the existing play action by fetching the
+        # link id. Simplest: re-fetch season detail to find the link id.
+        try:
+            sdata = api.get("/shows/%d/seasons/%d" % (show_id, season))
+            links_map = sdata.get("links") or {}
+            ep_links = links_map.get(str(episode_id)) or links_map.get(episode_id) or []
+            for l in ep_links:
+                if (l.get("magnet_hash") or "") == hash_:
+                    xbmc.executebuiltin("PlayMedia(%s)" % _url(
+                        action="play_episode", link_id=l["id"],
+                        episode_id=episode_id, show_id=show_id))
+                    return
+        except api.APIError:
+            pass
+        # Fall through to resolve-magnet path if we couldn't find the
+        # link id (cache may be stale).
+
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Resolving %s..." % ((chosen.get("title") or "")[:40]))
+    body = {
+        "hash":        hash_,
+        "title":       chosen.get("title") or "",
+        "quality":     chosen.get("quality") or "",
+        "size_bytes":  int(chosen.get("size_bytes") or 0),
+        "seeders":     int(chosen.get("seeders") or 0),
+        "source_site": chosen.get("source_site") or "",
+    }
+    try:
+        resp = api.post("/realdebrid/resolve-magnet/%d" % episode_id,
+                         body=body, _timeout=60)
+    except api.APIError as e:
+        progress.close()
+        api.notify("Resolve failed: %s" % str(e)[:80],
+                   icon=xbmcgui.NOTIFICATION_ERROR)
+        return
+    progress.close()
+    link = (resp or {}).get("link") or {}
+    if not link.get("id"):
+        api.notify("RD returned no playable link",
+                   icon=xbmcgui.NOTIFICATION_WARNING)
+        return
+    # Hand off to the existing play_episode action.
+    xbmc.executebuiltin("PlayMedia(%s)" % _url(
+        action="play_episode", link_id=link["id"],
+        episode_id=episode_id, show_id=show_id))
