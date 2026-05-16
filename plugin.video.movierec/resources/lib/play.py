@@ -7,7 +7,9 @@ import xbmcaddon
 import xbmcgui
 import xbmcplugin
 
-from . import api, scrobble, progress as progress_mod, aniskip, skip_windows
+from . import api, scrobble, progress as progress_mod, aniskip
+from .otaku_compat.skip_intro import SkipIntro as _SkipIntro
+from .otaku_compat.playing_next import PlayingNext as _PlayingNext
 
 ADDON = xbmcaddon.Addon()
 
@@ -494,26 +496,24 @@ def _anime_skip_watcher(show_id, episode_number):
         except RuntimeError:
             break
 
-        # Skip-Intro popup
+        # Skip-Intro popup — invoke Otaku's SkipIntro WindowXMLDialog
         if not intro_shown and intro and intro.get("end"):
             start = int(intro.get("start") or 0)
             end   = int(intro["end"])
             if start <= cur < end:
                 intro_shown = True
-                # show_skip_intro blocks on its own doModal; run on a
-                # short-lived daemon so this watcher loop stays alive.
                 threading.Thread(
-                    target=skip_windows.show_skip_intro,
+                    target=_show_skip_intro_otaku,
                     args=(end,),
                     daemon=True,
                 ).start()
 
-        # Playing-Next popup
+        # Playing-Next popup — Otaku's PlayingNext WindowXMLDialog
         if not next_shown and cur >= playnext_at and total - cur > 2:
             next_shown = True
             outro_end = int((outro or {}).get("end") or 0)
             threading.Thread(
-                target=skip_windows.show_playing_next,
+                target=_show_playing_next_otaku,
                 args=(outro_end,),
                 daemon=True,
             ).start()
@@ -522,3 +522,47 @@ def _anime_skip_watcher(show_id, episode_number):
             break
         if monitor.waitForAbort(2):
             break
+
+
+def _addon_path():
+    return ADDON.getAddonInfo("path")
+
+
+def _show_skip_intro_otaku(intro_end):
+    """Invoke Otaku's verbatim SkipIntro WindowXMLDialog."""
+    api.notify("DIAG: opening skip-intro popup (end=%ds)" % int(intro_end or 0))
+    try:
+        args = {
+            "item_type":         "skip_intro",
+            "skipintro_aniskip": True,         # we always have aniskip data here
+            "skipintro_end":     int(intro_end or 0),
+        }
+        dlg = _SkipIntro("skip_intro_default.xml", _addon_path(), actionArgs=args)
+        dlg.doModal()
+        del dlg
+    except Exception as e:
+        xbmc.log("[movieRec] skip-intro otaku popup error: %s" % e, xbmc.LOGWARNING)
+        api.notify("DIAG: skip-intro popup error: %s" % str(e)[:60],
+                   icon=xbmcgui.NOTIFICATION_ERROR)
+
+
+def _show_playing_next_otaku(outro_end):
+    """Invoke Otaku's verbatim PlayingNext WindowXMLDialog. Uses the
+    skip_outro_default.xml variant when we have outro data (renders the
+    Skip Outro button), playing_next_default.xml otherwise."""
+    api.notify("DIAG: opening playing-next popup")
+    xml_file = "skip_outro_default.xml" if outro_end and outro_end > 0 else "playing_next_default.xml"
+    try:
+        args = {
+            "item_type":     "playing_next",
+            "skipoutro_end": int(outro_end or 0),
+            "thumb":         "",
+            "name":          "",
+        }
+        dlg = _PlayingNext(xml_file, _addon_path(), actionArgs=args)
+        dlg.doModal()
+        del dlg
+    except Exception as e:
+        xbmc.log("[movieRec] playing-next otaku popup error: %s" % e, xbmc.LOGWARNING)
+        api.notify("DIAG: playing-next popup error: %s" % str(e)[:60],
+                   icon=xbmcgui.NOTIFICATION_ERROR)
