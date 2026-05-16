@@ -1,154 +1,51 @@
-"""Programmatic xbmcgui.WindowDialog popups for anime: Skip Intro
-and Playing Next.
+"""Minimal-rendering skip-intro / playing-next dialogs.
 
-Built from code (no XML skin lookup) so we don't depend on Kodi's
-WindowXMLDialog resolution/skin resolution heuristics, which have
-caused dialogs to render invisibly across the last few addon versions.
-
-Controls are positioned for 1080p (1920x1080); Kodi auto-scales for
-other display sizes.
-
-Layout (bottom-right):
-
-  ┌───── solid black panel, white border ─────┐
-  │  [ Skip Intro ]      [ Close ]            │   (skip intro)
-  └────────────────────────────────────────────┘
-
-  ┌───── solid black panel, white border ─────┐
-  │  Up Next                                   │
-  │  [progress bar ────────────────]           │   (playing next)
-  │  [ Play Now ]  [ Skip Outro ]  [ Close ]  │
-  └────────────────────────────────────────────┘
+v0.4.15: stripped down to find what actually renders. Top-left
+positioning guaranteed visible regardless of coordinate-system base.
+No textures (skin defaults). Just labels and buttons.
 """
-import os
 import xbmc
 import xbmcaddon
 import xbmcgui
 
 _ADDON_ID = "plugin.video.movierec"
-
-# Display dimensions our coordinates are calibrated for. Kodi auto-scales.
-_W = 1920
-_H = 1080
-
-# Bottom-right placement for both dialogs.
-_PANEL_RIGHT = 60
-_PANEL_BOTTOM = 160
-
-# Action IDs from xbmcgui (avoid magic numbers)
 _ACTION_PREVIOUS_MENU = 10
 _ACTION_NAV_BACK      = 92
-_ACTION_SELECT_ITEM   = 7
-
-
-def _white_png():
-    """Absolute path to our shipped 1x1 white texture (tintable via
-    colorDiffuse on any ControlImage / ControlButton control)."""
-    addon_path = xbmcaddon.Addon(_ADDON_ID).getAddonInfo("path")
-    return os.path.join(addon_path, "resources", "media", "white.png")
-
-
-def _make_bg(x, y, w, h):
-    """Solid black panel with white border. Returns a list of
-    ControlImage(s) to addControl in order."""
-    tex = _white_png()
-    bg = xbmcgui.ControlImage(x, y, w, h, tex, colorDiffuse="FF0E0E0E")
-    # 2px white border on each side
-    top    = xbmcgui.ControlImage(x,         y,         w, 2,    tex, colorDiffuse="FFFFFFFF")
-    bottom = xbmcgui.ControlImage(x,         y + h - 2, w, 2,    tex, colorDiffuse="FFFFFFFF")
-    left   = xbmcgui.ControlImage(x,         y,         2, h,    tex, colorDiffuse="FFFFFFFF")
-    right  = xbmcgui.ControlImage(x + w - 2, y,         2, h,    tex, colorDiffuse="FFFFFFFF")
-    return [bg, top, bottom, left, right]
-
-
-def _make_button(x, y, w, h, label, *, blue=False):
-    """ControlButton with our white texture tinted blue (primary) or
-    grey (secondary). Centered text. Focus state uses a brighter blue."""
-    tex = _white_png()
-    if blue:
-        no_focus = "FF2962FF"
-        focused  = "FF1E88E5"
-    else:
-        no_focus = "FF3A3A3A"
-        focused  = "FF888888"
-    return xbmcgui.ControlButton(
-        x, y, w, h, label,
-        focusTexture=tex,
-        noFocusTexture=tex,
-        textColor="FFFFFFFF",
-        focusedColor="FFFFFFFF",
-        alignment=2 | 4,   # XBFONT_CENTER_X | XBFONT_CENTER_Y
-        textOffsetX=0,
-        textOffsetY=0,
-    ).__class__(  # rebuild with colorDiffuse via setColorDiffuse later
-        x, y, w, h, label,
-        focusTexture=tex,
-        noFocusTexture=tex,
-        textColor="FFFFFFFF",
-        focusedColor="FFFFFFFF",
-        alignment=2 | 4,
-        textOffsetX=0,
-        textOffsetY=0,
-    )
 
 
 class SkipIntroDialog(xbmcgui.WindowDialog):
-    """Popup with Skip Intro / Close buttons. Use doModal() to display;
-    onInit() runs the background time-loop on Kodi's UI thread (xbmc.sleep
-    yields back so Kodi can also process input + render).
-
-    show() from a daemon thread produces an invisible dialog — Kodi
-    requires UI ops on its main thread. doModal handles the thread
-    marshaling internally."""
+    """Top-left placement, no custom textures — should render with the
+    skin's default button style on any Kodi build."""
 
     def __init__(self, intro_end):
-        # NOTE: xbmcgui.WindowDialog.__init__ takes no args. Don't pass any.
         super().__init__()
         self.intro_end = int(intro_end or 0)
         self.player = xbmc.Player()
         self.closed = False
 
-        # Panel geometry
-        panel_w = 460
-        panel_h = 88
-        x = _W - _PANEL_RIGHT - panel_w
-        y = _H - _PANEL_BOTTOM - panel_h
-        for c in _make_bg(x, y, panel_w, panel_h):
-            self.addControl(c)
-
-        # Buttons
-        skip_w, close_w, gap = 280, 140, 10
-        bx = x + 14
-        by = y + 12
-        bh = 64
+        # Top-left absolute coords — visible in both 1280x720 and 1920x1080
+        # coordinate spaces. The label exists so we can tell SOMETHING is
+        # rendering even before we touch button styling.
+        self.lbl = xbmcgui.ControlLabel(
+            50, 50, 600, 36, "[B]movieRec[/B]: Skip Intro?",
+            textColor="FFFFFFFF",
+        )
         self.btn_skip = xbmcgui.ControlButton(
-            bx, by, skip_w, bh, "Skip Intro",
-            focusTexture=_white_png(),
-            noFocusTexture=_white_png(),
-            textColor="FFFFFFFF", focusedColor="FFFFFFFF",
-            alignment=6,  # XBFONT_CENTER_X|XBFONT_CENTER_Y = 2|4
+            50, 100, 280, 64, "Skip Intro",
+            textColor="FFFFFFFF", focusedColor="FFFFFF00",
         )
         self.btn_close = xbmcgui.ControlButton(
-            bx + skip_w + gap, by, close_w, bh, "Close",
-            focusTexture=_white_png(),
-            noFocusTexture=_white_png(),
-            textColor="FFFFFFFF", focusedColor="FFFFFFFF",
-            alignment=6,
+            340, 100, 200, 64, "Close",
+            textColor="FFFFFFFF", focusedColor="FFFFFF00",
         )
+        self.addControl(self.lbl)
         self.addControl(self.btn_skip)
         self.addControl(self.btn_close)
 
-        # Wire up navigation between the two buttons
         self.btn_skip.controlRight(self.btn_close)
-        self.btn_skip.controlLeft(self.btn_close)
-        self.btn_close.controlRight(self.btn_skip)
         self.btn_close.controlLeft(self.btn_skip)
 
     def onInit(self):
-        """Called by Kodi on its UI thread once doModal renders the
-        dialog. We focus the Skip button and then enter the time-watch
-        loop here — xbmc.sleep() yields so Kodi keeps processing input
-        and rendering even while we're 'looping'."""
         try:
             self.setFocus(self.btn_skip)
         except Exception:
@@ -166,8 +63,7 @@ class SkipIntroDialog(xbmcgui.WindowDialog):
         self.close()
 
     def onAction(self, action):
-        aid = action.getId()
-        if aid in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
+        if action.getId() in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
             self.closed = True
             self.close()
 
@@ -188,7 +84,7 @@ class SkipIntroDialog(xbmcgui.WindowDialog):
 
 
 class PlayingNextDialog(xbmcgui.WindowDialog):
-    """Non-modal popup with Play Now / Skip Outro / Close + progress bar."""
+    """Same minimal pattern for the end-of-episode panel."""
 
     def __init__(self, outro_end):
         super().__init__()
@@ -198,67 +94,29 @@ class PlayingNextDialog(xbmcgui.WindowDialog):
             self.total_time = int(self.player.getTotalTime() or 0)
         except RuntimeError:
             self.total_time = 0
-        try:
-            self.duration = max(self.total_time - int(self.player.getTime() or 0), 1)
-        except RuntimeError:
-            self.duration = 1
         self.closed = False
 
-        # Panel geometry (taller than skip-intro to fit the progress bar)
-        panel_w = 600
-        panel_h = 180
-        x = _W - _PANEL_RIGHT - panel_w
-        y = _H - _PANEL_BOTTOM - panel_h
-        for c in _make_bg(x, y, panel_w, panel_h):
-            self.addControl(c)
-
-        # Title
-        title = xbmcgui.ControlLabel(
-            x + 20, y + 16, panel_w - 40, 32, "Up Next",
+        self.lbl = xbmcgui.ControlLabel(
+            50, 50, 700, 36, "[B]movieRec[/B]: Up Next",
             textColor="FFFFFFFF",
         )
-        self.addControl(title)
-
-        # Progress bar (we update its percent in show_and_run)
-        self.progress = xbmcgui.ControlProgress(
-            x + 20, y + 54, panel_w - 40, 8,
-            texturebg=_white_png(),
-            textureleft=_white_png(),
-            texturemid=_white_png(),
-            textureright=_white_png(),
-            textureoverlay=_white_png(),
-        )
-        self.addControl(self.progress)
-
-        # Buttons row
-        bw_play, bw_skip, bw_close, gap = 180, 180, 160, 10
-        bx = x + 20
-        by = y + 84
-        bh = 64
         self.btn_play = xbmcgui.ControlButton(
-            bx, by, bw_play, bh, "Play Now",
-            focusTexture=_white_png(), noFocusTexture=_white_png(),
-            textColor="FFFFFFFF", focusedColor="FFFFFFFF", alignment=6,
+            50, 100, 180, 64, "Play Now",
+            textColor="FFFFFFFF", focusedColor="FFFFFF00",
         )
         self.btn_skipoutro = xbmcgui.ControlButton(
-            bx + bw_play + gap, by, bw_skip, bh, "Skip Outro",
-            focusTexture=_white_png(), noFocusTexture=_white_png(),
-            textColor="FFFFFFFF", focusedColor="FFFFFFFF", alignment=6,
+            240, 100, 200, 64, "Skip Outro",
+            textColor="FFFFFFFF", focusedColor="FFFFFF00",
         )
         self.btn_close = xbmcgui.ControlButton(
-            bx + bw_play + bw_skip + gap * 2, by, bw_close, bh, "Close",
-            focusTexture=_white_png(), noFocusTexture=_white_png(),
-            textColor="FFFFFFFF", focusedColor="FFFFFFFF", alignment=6,
+            450, 100, 160, 64, "Close",
+            textColor="FFFFFFFF", focusedColor="FFFFFF00",
         )
-        for b in (self.btn_play, self.btn_skipoutro, self.btn_close):
-            self.addControl(b)
-
-        # Navigation between buttons (wraps)
+        for c in (self.lbl, self.btn_play, self.btn_skipoutro, self.btn_close):
+            self.addControl(c)
         self.btn_play.controlRight(self.btn_skipoutro)
-        self.btn_play.controlLeft(self.btn_close)
-        self.btn_skipoutro.controlRight(self.btn_close)
         self.btn_skipoutro.controlLeft(self.btn_play)
-        self.btn_close.controlRight(self.btn_play)
+        self.btn_skipoutro.controlRight(self.btn_close)
         self.btn_close.controlLeft(self.btn_skipoutro)
 
     def onInit(self):
@@ -273,20 +131,13 @@ class PlayingNextDialog(xbmcgui.WindowDialog):
                 cur = int(self.player.getTime())
             except RuntimeError:
                 break
-            remaining = self.total_time - cur
-            if remaining <= 2:
+            if self.total_time - cur <= 2:
                 break
-            try:
-                pct = max(0, min(100, int((remaining / max(self.duration, 1)) * 100)))
-                self.progress.setPercent(pct)
-            except Exception:
-                pass
             xbmc.sleep(1000)
         self.close()
 
     def onAction(self, action):
-        aid = action.getId()
-        if aid in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
+        if action.getId() in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
             self.closed = True
             self.close()
 
@@ -314,17 +165,12 @@ class PlayingNextDialog(xbmcgui.WindowDialog):
 # ─── Public entry points ──────────────────────────────────────────────
 
 def show_skip_intro(intro_end):
-    """Open the Skip Intro popup (programmatic, non-modal)."""
-    # DIAG (0.4.13): toast + log right before any GUI work, then again on
-    # exception, so we can localize failure to "watcher fired but UI broke"
-    # vs "watcher never fired."
+    """Open Skip Intro popup. doModal blocks the calling daemon thread
+    until close; Kodi marshals the UI to its main thread via onInit."""
     xbmcgui.Dialog().notification("movieRec",
         "DIAG: opening skip-intro popup (end=%ds)" % int(intro_end or 0),
         xbmcgui.NOTIFICATION_INFO, 3000)
     try:
-        # doModal() pushes the dialog onto Kodi's UI thread and blocks
-        # the caller (our daemon thread) until close. show() from a
-        # daemon thread renders an invisible dialog.
         dlg = SkipIntroDialog(intro_end)
         dlg.doModal()
         del dlg
@@ -336,7 +182,6 @@ def show_skip_intro(intro_end):
 
 
 def show_playing_next(outro_end=0):
-    """Open the Playing Next popup (programmatic, non-modal)."""
     xbmcgui.Dialog().notification("movieRec",
         "DIAG: opening playing-next popup",
         xbmcgui.NOTIFICATION_INFO, 3000)
