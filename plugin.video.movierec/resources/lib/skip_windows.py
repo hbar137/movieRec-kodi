@@ -93,7 +93,13 @@ def _make_button(x, y, w, h, label, *, blue=False):
 
 
 class SkipIntroDialog(xbmcgui.WindowDialog):
-    """Non-modal popup with Skip Intro / Close buttons."""
+    """Popup with Skip Intro / Close buttons. Use doModal() to display;
+    onInit() runs the background time-loop on Kodi's UI thread (xbmc.sleep
+    yields back so Kodi can also process input + render).
+
+    show() from a daemon thread produces an invisible dialog — Kodi
+    requires UI ops on its main thread. doModal handles the thread
+    marshaling internally."""
 
     def __init__(self, intro_end):
         # NOTE: xbmcgui.WindowDialog.__init__ takes no args. Don't pass any.
@@ -138,42 +144,40 @@ class SkipIntroDialog(xbmcgui.WindowDialog):
         self.btn_close.controlRight(self.btn_skip)
         self.btn_close.controlLeft(self.btn_skip)
 
-    def show_and_run(self):
-        """Display dialog, focus the Skip button, and run a background
-        loop that auto-closes the dialog once we pass intro_end."""
-        self.show()
-        self.setFocus(self.btn_skip)
-        monitor = xbmc.Monitor()
+    def onInit(self):
+        """Called by Kodi on its UI thread once doModal renders the
+        dialog. We focus the Skip button and then enter the time-watch
+        loop here — xbmc.sleep() yields so Kodi keeps processing input
+        and rendering even while we're 'looping'."""
         try:
-            while not self.closed and self.player.isPlaying():
-                try:
-                    cur = int(self.player.getTime())
-                except RuntimeError:
-                    break
-                if cur >= self.intro_end:
-                    break
-                if monitor.waitForAbort(1):
-                    break
-        finally:
+            self.setFocus(self.btn_skip)
+        except Exception:
+            pass
+        while not self.closed:
             try:
-                self.close()
-            except Exception:
-                pass
+                if not self.player.isPlaying():
+                    break
+                cur = int(self.player.getTime())
+            except RuntimeError:
+                break
+            if cur >= self.intro_end:
+                break
+            xbmc.sleep(1000)
+        self.close()
 
     def onAction(self, action):
         aid = action.getId()
         if aid in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
             self.closed = True
             self.close()
-        elif aid == _ACTION_SELECT_ITEM:
-            # Enter on focused button — dispatch to onControl manually
-            ctrl = self.getFocus() if hasattr(self, "getFocus") else None
-            self.onControl(ctrl)
 
     def onControl(self, control):
         if control is None:
             return
-        cid = control.getId()
+        try:
+            cid = control.getId()
+        except Exception:
+            return
         if cid == self.btn_skip.getId():
             try:
                 self.player.seekTime(self.intro_end)
@@ -257,45 +261,42 @@ class PlayingNextDialog(xbmcgui.WindowDialog):
         self.btn_close.controlRight(self.btn_play)
         self.btn_close.controlLeft(self.btn_skipoutro)
 
-    def show_and_run(self):
-        self.show()
-        self.setFocus(self.btn_play)
-        monitor = xbmc.Monitor()
+    def onInit(self):
         try:
-            while not self.closed and self.player.isPlaying():
-                try:
-                    cur = int(self.player.getTime())
-                except RuntimeError:
-                    break
-                remaining = self.total_time - cur
-                if remaining <= 2:
-                    break
-                try:
-                    pct = max(0, min(100, int((remaining / max(self.duration, 1)) * 100)))
-                    self.progress.setPercent(pct)
-                except Exception:
-                    pass
-                if monitor.waitForAbort(1):
-                    break
-        finally:
+            self.setFocus(self.btn_play)
+        except Exception:
+            pass
+        while not self.closed:
             try:
-                self.close()
+                if not self.player.isPlaying():
+                    break
+                cur = int(self.player.getTime())
+            except RuntimeError:
+                break
+            remaining = self.total_time - cur
+            if remaining <= 2:
+                break
+            try:
+                pct = max(0, min(100, int((remaining / max(self.duration, 1)) * 100)))
+                self.progress.setPercent(pct)
             except Exception:
                 pass
+            xbmc.sleep(1000)
+        self.close()
 
     def onAction(self, action):
         aid = action.getId()
         if aid in (_ACTION_PREVIOUS_MENU, _ACTION_NAV_BACK):
             self.closed = True
             self.close()
-        elif aid == _ACTION_SELECT_ITEM:
-            ctrl = self.getFocus() if hasattr(self, "getFocus") else None
-            self.onControl(ctrl)
 
     def onControl(self, control):
         if control is None:
             return
-        cid = control.getId()
+        try:
+            cid = control.getId()
+        except Exception:
+            return
         try:
             if cid == self.btn_play.getId():
                 self.player.seekTime(max(self.total_time - 5, 0))
@@ -321,7 +322,12 @@ def show_skip_intro(intro_end):
         "DIAG: opening skip-intro popup (end=%ds)" % int(intro_end or 0),
         xbmcgui.NOTIFICATION_INFO, 3000)
     try:
-        SkipIntroDialog(intro_end).show_and_run()
+        # doModal() pushes the dialog onto Kodi's UI thread and blocks
+        # the caller (our daemon thread) until close. show() from a
+        # daemon thread renders an invisible dialog.
+        dlg = SkipIntroDialog(intro_end)
+        dlg.doModal()
+        del dlg
     except Exception as e:
         xbmc.log("[movieRec] skip-intro popup error: %s" % e, xbmc.LOGWARNING)
         xbmcgui.Dialog().notification("movieRec",
@@ -335,7 +341,9 @@ def show_playing_next(outro_end=0):
         "DIAG: opening playing-next popup",
         xbmcgui.NOTIFICATION_INFO, 3000)
     try:
-        PlayingNextDialog(outro_end).show_and_run()
+        dlg = PlayingNextDialog(outro_end)
+        dlg.doModal()
+        del dlg
     except Exception as e:
         xbmc.log("[movieRec] playing-next popup error: %s" % e, xbmc.LOGWARNING)
         xbmcgui.Dialog().notification("movieRec",
