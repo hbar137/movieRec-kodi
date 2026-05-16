@@ -265,10 +265,7 @@ def play_episode(handle, link_id, episode_id, show_id):
 
     # Anime-only: Japanese audio auto-select + skip-intro / playing-next popups.
     # Both are gated on the server having flagged this show as anime.
-    # DIAG (0.4.13): toast for every is_anime branch so the user can see
-    # without logs whether the server flagged this episode anime.
     if info.get("is_anime"):
-        api.notify("DIAG: is_anime=true, spawning watchers")
         if ADDON.getSettingBool("anime_audio_jpn"):
             threading.Thread(target=_select_japanese_audio, daemon=True).start()
         threading.Thread(
@@ -276,8 +273,6 @@ def play_episode(handle, link_id, episode_id, show_id):
             args=(int(show_id), ep_num),
             daemon=True,
         ).start()
-    else:
-        api.notify("DIAG: is_anime=false from /play-episode")
 
 
 def _autoplay_next_watcher(show_id, season_num, episode_num):
@@ -466,16 +461,11 @@ def _anime_skip_watcher(show_id, episode_number):
     """
     from .otaku_compat import control as _ctl
 
-    api.notify("DIAG: anime watcher started (ep=%s)" % episode_number)
     if not episode_number:
         return
     times = aniskip.get_skip_times(show_id, episode_number)
     aniskip_intro = (times or {}).get("intro") or None
     aniskip_outro = (times or {}).get("outro") or None
-    api.notify("DIAG: intro=%s outro=%s" % (
-        ("%d-%d" % (int(aniskip_intro.get('start',0)), int(aniskip_intro.get('end',0)))) if aniskip_intro else "none",
-        ("%d-%d" % (int(aniskip_outro.get('start',0)), int(aniskip_outro.get('end',0)))) if aniskip_outro else "none",
-    ))
 
     player = xbmc.Player()
     for _ in range(20):
@@ -558,8 +548,6 @@ def _show_skip_intro_otaku(intro_end, intro_is_aniskip):
     intro_is_aniskip=True  → button seeks to exact intro_end (we know it).
     intro_is_aniskip=False → button does seekTime(current + skipintro.time)
                               i.e. default +90s jump. Mirrors Otaku."""
-    api.notify("DIAG: opening skip-intro popup (end=%ds, aniskip=%s)" %
-               (int(intro_end or 0), bool(intro_is_aniskip)))
     try:
         args = {
             "item_type":         "skip_intro",
@@ -570,9 +558,7 @@ def _show_skip_intro_otaku(intro_end, intro_is_aniskip):
         dlg.doModal()
         del dlg
     except Exception as e:
-        xbmc.log("[movieRec] skip-intro otaku popup error: %s" % e, xbmc.LOGWARNING)
-        api.notify("DIAG: skip-intro popup error: %s" % str(e)[:60],
-                   icon=xbmcgui.NOTIFICATION_ERROR)
+        xbmc.log("[movieRec] skip-intro popup error: %s" % e, xbmc.LOGWARNING)
 
 
 def _show_playing_next_otaku(outro_end, kind):
@@ -582,7 +568,6 @@ def _show_playing_next_otaku(outro_end, kind):
                     when we have aniskip outro data).
     kind='next'  → playing_next_default.xml (no Skip Outro button, used
                     when no outro data — the plain end-of-episode panel)."""
-    api.notify("DIAG: opening playing-next popup (kind=%s)" % kind)
     xml_file = "skip_outro_default.xml" if kind == "outro" else "playing_next_default.xml"
     try:
         args = {
@@ -595,6 +580,4 @@ def _show_playing_next_otaku(outro_end, kind):
         dlg.doModal()
         del dlg
     except Exception as e:
-        xbmc.log("[movieRec] playing-next otaku popup error: %s" % e, xbmc.LOGWARNING)
-        api.notify("DIAG: playing-next popup error: %s" % str(e)[:60],
-                   icon=xbmcgui.NOTIFICATION_ERROR)
+        xbmc.log("[movieRec] playing-next popup error: %s" % e, xbmc.LOGWARNING)
