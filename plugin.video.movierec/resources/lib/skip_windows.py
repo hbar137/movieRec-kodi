@@ -18,10 +18,15 @@ _ADDON_ID = "plugin.video.movierec"
 class SkipIntroDialog(xbmcgui.WindowXMLDialog):
     """Popup shown when current_time is inside [intro_start, intro_end].
     Background loop closes it once we pass intro_end so the user isn't
-    nagged after the intro is over."""
+    nagged after the intro is over.
 
-    def __init__(self, xml_file, location, **kwargs):
-        super().__init__()
+    Subclasses of WindowXMLDialog MUST NOT call super().__init__() — the
+    parent's __new__ already created the dialog from the XML path passed
+    at instantiation. Calling super().__init__() here would re-init the
+    dialog without arguments and break input routing (focus lost, no
+    remote nav). Just set local state in __init__."""
+
+    def __init__(self, *args, **kwargs):  # noqa: D401 — Kodi base ctor
         self.intro_end = kwargs.get("intro_end") or 0
         self.player = xbmc.Player()
         self.playing_file = self.player.getPlayingFile() if self.player.isPlaying() else ""
@@ -66,10 +71,12 @@ class PlayingNextDialog(xbmcgui.WindowXMLDialog):
        Play Now → seek near end so the natural-end autoplay watcher fires.
        Skip Outro → seek to outro_end (if known) or near end.
        Close → dismiss.
-    Plus a progress bar (control 3014) counting down to natural end."""
+    Plus a progress bar (control 3014) counting down to natural end.
 
-    def __init__(self, xml_file, location, **kwargs):
-        super().__init__()
+    Same WindowXMLDialog constructor caveat as SkipIntroDialog above —
+    do NOT call super().__init__()."""
+
+    def __init__(self, *args, **kwargs):  # noqa: D401 — Kodi base ctor
         self.outro_end = kwargs.get("outro_end") or 0
         self.player = xbmc.Player()
         self.playing_file = self.player.getPlayingFile() if self.player.isPlaying() else ""
