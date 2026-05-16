@@ -449,14 +449,31 @@ def _chapter_offsets():
     read chapter timing from a Python addon. Kodi returns offsets in seconds
     (float, can include fractional).
     """
+    raw = ""
     try:
-        resp = xbmc.executeJSONRPC(json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "Player.GetProperties",
-            "params": {"playerid": 1, "properties": ["chapters"]},
+        # Resolve the active video playerid first; hardcoding 1 fails when
+        # Kodi has rotated players (audio→video).
+        pid_resp = xbmc.executeJSONRPC(json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "Player.GetActivePlayers",
         }))
-        data = json.loads(resp or "{}") or {}
+        pid_data = json.loads(pid_resp or "{}") or {}
+        players = (pid_data.get("result") or [])
+        pid = None
+        for p in players:
+            if (p or {}).get("type") == "video":
+                pid = p.get("playerid")
+                break
+        if pid is None:
+            pid = 1  # fall back to canonical video playerid
+
+        raw = xbmc.executeJSONRPC(json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "Player.GetProperties",
+            "params": {"playerid": pid, "properties": ["chapters"]},
+        }))
+        data = json.loads(raw or "{}") or {}
         chapters = ((data.get("result") or {}).get("chapters")) or []
-    except Exception:
+    except Exception as e:
+        xbmc.log("[movierec.chapters] JSON-RPC error: %s" % e, xbmc.LOGWARNING)
         return []
     offs = []
     for c in chapters:
@@ -465,6 +482,13 @@ def _chapter_offsets():
         except Exception:
             pass
     offs = sorted(set(offs))
+    if not offs:
+        # Truncate response so kodi.log stays readable
+        xbmc.log("[movierec.chapters] empty; raw[:300]=%s" % (raw or "")[:300],
+                 xbmc.LOGWARNING)
+    else:
+        xbmc.log("[movierec.chapters] count=%d offsets=%s" % (len(offs), offs),
+                 xbmc.LOGWARNING)
     return offs
 
 
@@ -554,10 +578,16 @@ def _anime_skip_watcher(show_id, episode_number):
         if ch_intro:
             intro_start, intro_end = ch_intro
             intro_is_aniskip = True  # absolute seek to chapter-derived end
+            xbmc.log("[movierec.chapters] intro from chapters: %ds-%ds" % ch_intro,
+                     xbmc.LOGWARNING)
         else:
             intro_start = _ctl.getInt("skipintro.delay") or 1
             intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
             intro_is_aniskip = False
+            if chapters:
+                xbmc.log("[movierec.chapters] intro rejected (chapters=%d, ch2=%s, ch3=%s)"
+                         % (len(chapters), chapters[1] if len(chapters) > 1 else None,
+                            chapters[2] if len(chapters) > 2 else None), xbmc.LOGWARNING)
 
     # ── Outro / playing-next window (Otaku _handle_outro_and_playing_next) ──
     playnext_lead = _ctl.getInt("playingnext.time") or 30
@@ -572,9 +602,15 @@ def _anime_skip_watcher(show_id, episode_number):
         if ch_outro:
             outro_start_t, outro_end_aniskip = ch_outro
             playnext_kind = "outro"  # chapter-derived end → Skip Outro button works
+            xbmc.log("[movierec.chapters] outro from chapters: %ds-%ds (total=%ds)"
+                     % (ch_outro[0], ch_outro[1], total_time), xbmc.LOGWARNING)
         else:
             outro_start_t = 0
             playnext_kind = "next"   # use playing_next_default.xml
+            if chapters:
+                xbmc.log("[movierec.chapters] outro rejected (chapters=%d, ch[-2]=%s, ch[-1]=%s, total=%ds)"
+                         % (len(chapters), chapters[-2] if len(chapters) > 1 else None,
+                            chapters[-1] if chapters else None, total_time), xbmc.LOGWARNING)
 
     intro_shown = False
     next_shown  = False
