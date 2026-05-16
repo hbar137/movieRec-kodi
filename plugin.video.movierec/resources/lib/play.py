@@ -131,7 +131,7 @@ def play_link(handle, link_id, movie_id):
     if ADDON.getSettingBool("auto_english_subs"):
         threading.Thread(
             target=_select_english_subtitle,
-            args=(info.get("filename") or "",),
+            args=(info.get("filename") or "", len(sub_urls)),
             daemon=True,
         ).start()
 
@@ -247,7 +247,7 @@ def play_episode(handle, link_id, episode_id, show_id):
     if ADDON.getSettingBool("auto_english_subs"):
         threading.Thread(
             target=_select_english_subtitle,
-            args=(info.get("filename") or "",),
+            args=(info.get("filename") or "", len(sub_urls)),
             daemon=True,
         ).start()
 
@@ -475,21 +475,23 @@ def _notify(msg):
         pass
 
 
-_SUB_FILE_EXTS = (".srt", ".sub", ".vtt", ".ass", ".ssa", ".idx", ".smi")
 _EN_TOKENS = ("eng", "en", "english")
 
 
-def _select_english_subtitle(stream_filename):
+def _select_english_subtitle(stream_filename, external_count):
     """Auto-enable an English subtitle track. Preference order:
-      1) embedded ('internal') English track — name has no sub-file extension
+      1) embedded ('internal') English track
       2) external sub (attached via li.setSubtitles) whose basename most
          closely matches the stream filename, ratio >= 0.4
 
-    External tracks attached via li.setSubtitles end up in Kodi's subtitles
-    list with the URL basename as 'name', which always carries a sub
-    extension because _fetch_subtitle_urls forces .srt. That's the
-    discriminator vs embedded tracks (whose name comes from container
-    metadata and never has a file extension)."""
+    Discriminator: Kodi rewrites the 'name' of externally-attached subs to
+    include the localized string 21602 ('External' on en_GB) — typically as
+    '<base> (External) (i/N)'. We treat any entry whose name contains
+    'external' (case-insensitive) as external. Fallback: if external_count
+    is known and the entry's index sits in the trailing window
+    [total - external_count, total), also treat as external — catches
+    non-English Kodi UIs where the string isn't 'External'.
+    """
     import json as _json
     import os as _os
     import difflib as _difflib
@@ -521,8 +523,19 @@ def _select_english_subtitle(stream_filename):
         _notify("Subs: no subtitle streams reported")
         return
 
+    total = len(subs)
+    ext_n = max(0, int(external_count or 0))
+    embed_cutoff = total - ext_n if ext_n else total
+
     def _is_external(s):
-        return (s.get("name") or "").strip().lower().endswith(_SUB_FILE_EXTS)
+        name = (s.get("name") or "").lower()
+        if "external" in name:
+            return True
+        try:
+            idx = int(s.get("index", -1))
+        except (TypeError, ValueError):
+            idx = -1
+        return ext_n > 0 and idx >= embed_cutoff
 
     internals = [s for s in subs if not _is_external(s)]
     externals = [s for s in subs if _is_external(s)]
