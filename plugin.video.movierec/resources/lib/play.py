@@ -92,19 +92,12 @@ def play_link(handle, link_id, movie_id):
         xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
         return
 
-    # Resume offer: only if we have a saved position deep enough to matter and
-    # not so close to the end that "resume" would just credits-roll.
+    # Resume: set ResumeTime/TotalTime when we have a saved position deep
+    # enough to matter and not so close to the end that "resume" would just
+    # credits-roll. Kodi shows its native "Resume / Start from beginning"
+    # dialog automatically when these are set.
     pos = int(info.get("position_seconds") or 0)
     dur = int(info.get("duration_seconds") or 0)
-    resume_offset = 0
-    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
-        msg = "Resume from %s?" % _format_hms(pos)
-        if dur > 0:
-            msg += "  (of %s)" % _format_hms(dur)
-        if xbmcgui.Dialog().yesno("movieRec", msg,
-                                   yeslabel="Resume", nolabel="Start over",
-                                   defaultbutton=xbmcgui.DLG_YESNO_YES_BTN):
-            resume_offset = pos
 
     li = xbmcgui.ListItem(path=stream_url)
     title = info.get("title") or info.get("filename") or "movieRec"
@@ -116,9 +109,8 @@ def play_link(handle, link_id, movie_id):
     if info.get("overview"):
         vinfo["plot"] = info["overview"]
     li.setInfo("video", vinfo)
-    if resume_offset:
-        li.setProperty("StartOffset", str(resume_offset))
-        li.setProperty("ResumeTime", str(resume_offset))
+    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
+        li.setProperty("ResumeTime", str(pos))
         if dur > 0:
             li.setProperty("TotalTime", str(dur))
 
@@ -194,15 +186,6 @@ def play_episode(handle, link_id, episode_id, show_id):
 
     pos = int(info.get("position_seconds") or 0)
     dur = int(info.get("duration_seconds") or 0)
-    resume_offset = 0
-    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
-        msg = "Resume from %s?" % _format_hms(pos)
-        if dur > 0:
-            msg += "  (of %s)" % _format_hms(dur)
-        if xbmcgui.Dialog().yesno("movieRec", msg,
-                                   yeslabel="Resume", nolabel="Start over",
-                                   defaultbutton=xbmcgui.DLG_YESNO_YES_BTN):
-            resume_offset = pos
 
     li = xbmcgui.ListItem(path=stream_url)
     show_title = info.get("show_title") or "movieRec"
@@ -231,9 +214,9 @@ def play_episode(handle, link_id, episode_id, show_id):
     if info.get("air_date"):
         vinfo["aired"] = info["air_date"]
     li.setInfo("video", vinfo)
-    if resume_offset:
-        li.setProperty("StartOffset", str(resume_offset))
-        li.setProperty("ResumeTime", str(resume_offset))
+    # Kodi shows its native resume dialog automatically when ResumeTime is set.
+    if pos > 60 and (dur <= 0 or pos < int(0.9 * dur)):
+        li.setProperty("ResumeTime", str(pos))
         if dur > 0:
             li.setProperty("TotalTime", str(dur))
 
@@ -606,26 +589,7 @@ def _select_english_subtitle(stream_filename, external_count):
                 _notify("Subs: setSubtitleStream failed")
             return
 
-    # Diagnostic: no English match found. Dump what Kodi actually reported
-    # so the user can see lang/name values without log access.
-    _notify("Subs: no match. int=%d ext=%d total=%d" %
-            (len(internals), len(externals), len(subs)))
-    xbmc.sleep(3200)
-    for i, s in enumerate(internals[:4]):
-        lang = (s.get("language") or "").strip() or "''"
-        nm = (s.get("name") or "").strip() or "''"
-        if len(nm) > 40:
-            nm = nm[:40] + "…"
-        _notify("int#%d idx=%s lang=%s | %s" % (i, s.get("index"), lang, nm))
-        xbmc.sleep(3200)
-    if not internals and externals:
-        for i, s in enumerate(externals[:3]):
-            lang = (s.get("language") or "").strip() or "''"
-            nm = (s.get("name") or "").strip() or "''"
-            if len(nm) > 40:
-                nm = nm[:40] + "…"
-            _notify("ext#%d idx=%s lang=%s | %s" % (i, s.get("index"), lang, nm))
-            xbmc.sleep(3200)
+    _notify("Subs: no English match — pick manually")
 
 
 def _anime_skip_watcher(show_id, episode_number):
