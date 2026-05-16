@@ -447,26 +447,35 @@ def _select_japanese_audio():
 
 
 def _anime_skip_watcher(show_id, episode_number):
-    """Fetch aniskip times for this episode (anime only), then monitor the
-    player and pop the skip-intro / playing-next dialogs at the right
-    times. All UI work happens on the main thread via Kodi's dialog
-    machinery; this thread only fetches data and decides WHEN to show.
+    """Port of Otaku's ui/player.py _handle_skip_intro +
+    _handle_outro_and_playing_next combined into one watcher thread.
 
-    Both popups self-close when their time windows pass, so we just fire
-    each at most once."""
+    Key Otaku behaviors faithfully mirrored:
+      - When aniskip has intro data, use it (true window).
+      - When aniskip has NO intro data, fall back to default times
+        (skipintro.delay=5s + skipintro.duration=1min = 5..65s window)
+        and pass skipintro_aniskip=False to SkipIntro so its
+        handle_action seeks by skipintro.time (+90s) from current
+        position instead of to the (unknown) intro end.
+      - When aniskip has outro data, use skip_outro_default.xml (renders
+        the Skip Outro button) and time the playing-next popup to fire
+        at outro start.
+      - When aniskip has NO outro data, still fire the playing-next
+        popup ~30s before the natural end so the user still gets the
+        "Up Next" UX. Otaku uses control.getInt('playingnext.time').
+    """
+    from .otaku_compat import control as _ctl
+
     api.notify("DIAG: anime watcher started (ep=%s)" % episode_number)
     if not episode_number:
-        api.notify("DIAG: episode_number missing, exit")
         return
     times = aniskip.get_skip_times(show_id, episode_number)
-    intro = (times or {}).get("intro") or None
-    outro = (times or {}).get("outro") or None
+    aniskip_intro = (times or {}).get("intro") or None
+    aniskip_outro = (times or {}).get("outro") or None
     api.notify("DIAG: intro=%s outro=%s" % (
-        ("%d-%d" % (int(intro.get('start',0)), int(intro.get('end',0)))) if intro else "none",
-        ("%d-%d" % (int(outro.get('start',0)), int(outro.get('end',0)))) if outro else "none",
+        ("%d-%d" % (int(aniskip_intro.get('start',0)), int(aniskip_intro.get('end',0)))) if aniskip_intro else "none",
+        ("%d-%d" % (int(aniskip_outro.get('start',0)), int(aniskip_outro.get('end',0)))) if aniskip_outro else "none",
     ))
-    if not intro and not outro:
-        return  # nothing to do
 
     player = xbmc.Player()
     for _ in range(20):
@@ -476,47 +485,62 @@ def _anime_skip_watcher(show_id, episode_number):
     else:
         return
 
+    # ── Intro window (Otaku _handle_skip_intro) ──
+    if aniskip_intro and aniskip_intro.get("end"):
+        intro_start = int(aniskip_intro.get("start") or 0)
+        intro_end   = int(aniskip_intro["end"])
+        intro_is_aniskip = True
+    else:
+        intro_start = _ctl.getInt("skipintro.delay") or 1
+        intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
+        intro_is_aniskip = False
+
+    # ── Outro / playing-next window (Otaku _handle_outro_and_playing_next) ──
+    playnext_lead = _ctl.getInt("playingnext.time") or 30
+    outro_end_aniskip = 0
+    if aniskip_outro and aniskip_outro.get("start"):
+        # When we have outro data, fire AT outro_start (matches Otaku)
+        outro_start_t = int(aniskip_outro.get("start") or 0)
+        outro_end_aniskip = int(aniskip_outro.get("end") or 0)
+        playnext_kind = "outro"  # use skip_outro_default.xml
+    else:
+        outro_start_t = 0
+        playnext_kind = "next"   # use playing_next_default.xml
+
     intro_shown = False
     next_shown  = False
     monitor = xbmc.Monitor()
 
-    try:
-        total = int(player.getTotalTime() or 0)
-    except RuntimeError:
-        return
-    # Show "Playing Next" panel ~30s before the end OR at outro start,
-    # whichever is earlier. Keeps the UX consistent with Otaku.
-    playnext_at = max(total - 30, 0)
-    if outro and outro.get("start") and outro["start"] > 0:
-        playnext_at = min(playnext_at, int(outro["start"]))
-
     while not monitor.abortRequested() and player.isPlaying():
         try:
             cur = int(player.getTime())
+            total = int(player.getTotalTime() or 0)   # re-query each tick
         except RuntimeError:
             break
 
-        # Skip-Intro popup — invoke Otaku's SkipIntro WindowXMLDialog
-        if not intro_shown and intro and intro.get("end"):
-            start = int(intro.get("start") or 0)
-            end   = int(intro["end"])
-            if start <= cur < end:
-                intro_shown = True
-                threading.Thread(
-                    target=_show_skip_intro_otaku,
-                    args=(end,),
-                    daemon=True,
-                ).start()
-
-        # Playing-Next popup — Otaku's PlayingNext WindowXMLDialog
-        if not next_shown and cur >= playnext_at and total - cur > 2:
-            next_shown = True
-            outro_end = int((outro or {}).get("end") or 0)
+        # Skip-Intro popup — fires once when current_time enters the
+        # intro window (either real aniskip window or default 5..65s).
+        if not intro_shown and intro_start <= cur < intro_end:
+            intro_shown = True
             threading.Thread(
-                target=_show_playing_next_otaku,
-                args=(outro_end,),
+                target=_show_skip_intro_otaku,
+                args=(intro_end, intro_is_aniskip),
                 daemon=True,
             ).start()
+
+        # Playing-Next popup — fires at outro_start (when aniskip outro
+        # data exists) OR at total-playnext_lead seconds otherwise.
+        # total>0 guard avoids early-playback race when getTotalTime
+        # returns 0 momentarily.
+        if not next_shown and total > 0:
+            trigger_at = outro_start_t if outro_start_t > 0 else max(total - playnext_lead, 0)
+            if cur >= trigger_at and total - cur > 2:
+                next_shown = True
+                threading.Thread(
+                    target=_show_playing_next_otaku,
+                    args=(outro_end_aniskip, playnext_kind),
+                    daemon=True,
+                ).start()
 
         if intro_shown and next_shown:
             break
@@ -528,13 +552,18 @@ def _addon_path():
     return ADDON.getAddonInfo("path")
 
 
-def _show_skip_intro_otaku(intro_end):
-    """Invoke Otaku's verbatim SkipIntro WindowXMLDialog."""
-    api.notify("DIAG: opening skip-intro popup (end=%ds)" % int(intro_end or 0))
+def _show_skip_intro_otaku(intro_end, intro_is_aniskip):
+    """Invoke Otaku's verbatim SkipIntro WindowXMLDialog.
+
+    intro_is_aniskip=True  → button seeks to exact intro_end (we know it).
+    intro_is_aniskip=False → button does seekTime(current + skipintro.time)
+                              i.e. default +90s jump. Mirrors Otaku."""
+    api.notify("DIAG: opening skip-intro popup (end=%ds, aniskip=%s)" %
+               (int(intro_end or 0), bool(intro_is_aniskip)))
     try:
         args = {
             "item_type":         "skip_intro",
-            "skipintro_aniskip": True,         # we always have aniskip data here
+            "skipintro_aniskip": bool(intro_is_aniskip),
             "skipintro_end":     int(intro_end or 0),
         }
         dlg = _SkipIntro("skip_intro_default.xml", _addon_path(), actionArgs=args)
@@ -546,12 +575,15 @@ def _show_skip_intro_otaku(intro_end):
                    icon=xbmcgui.NOTIFICATION_ERROR)
 
 
-def _show_playing_next_otaku(outro_end):
-    """Invoke Otaku's verbatim PlayingNext WindowXMLDialog. Uses the
-    skip_outro_default.xml variant when we have outro data (renders the
-    Skip Outro button), playing_next_default.xml otherwise."""
-    api.notify("DIAG: opening playing-next popup")
-    xml_file = "skip_outro_default.xml" if outro_end and outro_end > 0 else "playing_next_default.xml"
+def _show_playing_next_otaku(outro_end, kind):
+    """Invoke Otaku's verbatim PlayingNext WindowXMLDialog.
+
+    kind='outro' → skip_outro_default.xml (renders Skip Outro button, used
+                    when we have aniskip outro data).
+    kind='next'  → playing_next_default.xml (no Skip Outro button, used
+                    when no outro data — the plain end-of-episode panel)."""
+    api.notify("DIAG: opening playing-next popup (kind=%s)" % kind)
+    xml_file = "skip_outro_default.xml" if kind == "outro" else "playing_next_default.xml"
     try:
         args = {
             "item_type":     "playing_next",
