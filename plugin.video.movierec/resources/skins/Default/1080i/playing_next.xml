@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <window>
-	<!-- Non-modal popup shown by PlayingNext Python class in the last ~30s
-	     of an anime episode. Three buttons + a progress bar:
-	       3001 = Play Now      (seek to end, scrobble fires, autoplay-next runs)
+	<!-- Non-modal popup shown by PlayingNext Python class in the last
+	     ~30s of an anime episode. Three buttons + a progress bar:
+	       3001 = Play Now      (seek to end → autoplay-next watcher fires)
 	       3002 = Close         (dismiss)
 	       3003 = Skip Outro    (seek to outro end if known)
-	       3014 = progress bar  (counts down to next episode auto-start) -->
+	       3014 = progress bar  (counts down to natural end) -->
 	<defaultcontrol always="true">3001</defaultcontrol>
 	<onload>Dialog.Close(fullscreeninfo,true)</onload>
 	<onload>Dialog.Close(videoosd,true)</onload>
+	<onload>SetFocus(3001)</onload>
 	<controls>
 		<control type="group">
 			<animation type="WindowOpen" reversible="false">
@@ -20,33 +21,56 @@
 				<effect type="slide" start="0,0" end="0,200" time="250"/>
 			</animation>
 			<control type="group">
-				<right>40</right>
-				<bottom>120</bottom>
-				<width>560</width>
-				<height>160</height>
-				<!-- Background panel -->
+				<right>60</right>
+				<bottom>160</bottom>
+				<width>600</width>
+				<height>180</height>
+				<!-- Solid black background -->
 				<control type="image">
 					<width>100%</width>
 					<height>100%</height>
-					<texture border="6" colordiffuse="EE1A1A1A">white.png</texture>
+					<texture colordiffuse="FF0E0E0E">white.png</texture>
+				</control>
+				<!-- 2px white border -->
+				<control type="image">
+					<width>100%</width>
+					<height>2</height>
+					<texture colordiffuse="FFFFFFFF">white.png</texture>
+				</control>
+				<control type="image">
+					<top>178</top>
+					<width>100%</width>
+					<height>2</height>
+					<texture colordiffuse="FFFFFFFF">white.png</texture>
+				</control>
+				<control type="image">
+					<width>2</width>
+					<height>100%</height>
+					<texture colordiffuse="FFFFFFFF">white.png</texture>
+				</control>
+				<control type="image">
+					<left>598</left>
+					<width>2</width>
+					<height>100%</height>
+					<texture colordiffuse="FFFFFFFF">white.png</texture>
 				</control>
 				<!-- Title -->
 				<control type="label">
-					<top>14</top>
-					<left>16</left>
-					<width>528</width>
-					<height>28</height>
+					<top>16</top>
+					<left>20</left>
+					<width>560</width>
+					<height>32</height>
 					<font>font13</font>
 					<textcolor>FFFFFFFF</textcolor>
 					<label>Up Next</label>
 				</control>
-				<!-- Progress bar (controlled by Python; 3014) -->
+				<!-- Progress bar (3014 controlled by Python) -->
 				<control type="progress" id="3014">
-					<top>46</top>
-					<left>16</left>
-					<width>528</width>
-					<height>6</height>
-					<texturebg colordiffuse="33FFFFFF">white.png</texturebg>
+					<top>54</top>
+					<left>20</left>
+					<width>560</width>
+					<height>8</height>
+					<texturebg colordiffuse="44FFFFFF">white.png</texturebg>
 					<lefttexture colordiffuse="FF1E88E5">white.png</lefttexture>
 					<midtexture colordiffuse="FF1E88E5">white.png</midtexture>
 					<righttexture colordiffuse="FF1E88E5">white.png</righttexture>
@@ -55,46 +79,55 @@
 				<!-- Buttons -->
 				<control type="grouplist">
 					<orientation>horizontal</orientation>
-					<top>72</top>
-					<left>16</left>
-					<height>64</height>
-					<width>528</width>
-					<itemgap>8</itemgap>
+					<top>84</top>
+					<left>20</left>
+					<height>72</height>
+					<width>560</width>
+					<itemgap>10</itemgap>
 					<control type="button" id="3001">
 						<label>Play Now</label>
-						<height>56</height>
+						<height>64</height>
 						<width>180</width>
 						<font>font13</font>
 						<textcolor>FFFFFFFF</textcolor>
 						<focusedcolor>FFFFFFFF</focusedcolor>
 						<align>center</align>
 						<aligny>center</aligny>
-						<texturefocus border="6" colordiffuse="FF1E88E5">white.png</texturefocus>
-						<texturenofocus border="6" colordiffuse="DD2962FF">white.png</texturenofocus>
+						<texturefocus border="4" colordiffuse="FF1E88E5">white.png</texturefocus>
+						<texturenofocus border="4" colordiffuse="FF2962FF">white.png</texturenofocus>
+						<pulseonselect>no</pulseonselect>
+						<onleft>3002</onleft>
+						<onright>3003</onright>
 					</control>
 					<control type="button" id="3003">
 						<label>Skip Outro</label>
-						<height>56</height>
+						<height>64</height>
 						<width>180</width>
 						<font>font13</font>
-						<textcolor>DDFFFFFF</textcolor>
+						<textcolor>FFFFFFFF</textcolor>
 						<focusedcolor>FFFFFFFF</focusedcolor>
 						<align>center</align>
 						<aligny>center</aligny>
-						<texturefocus border="6" colordiffuse="FF1E88E5">white.png</texturefocus>
-						<texturenofocus border="6" colordiffuse="AA333333">white.png</texturenofocus>
+						<texturefocus border="4" colordiffuse="FF1E88E5">white.png</texturefocus>
+						<texturenofocus border="4" colordiffuse="FF3A3A3A">white.png</texturenofocus>
+						<pulseonselect>no</pulseonselect>
+						<onleft>3001</onleft>
+						<onright>3002</onright>
 					</control>
 					<control type="button" id="3002">
 						<label>Close</label>
-						<height>56</height>
-						<width>140</width>
+						<height>64</height>
+						<width>160</width>
 						<font>font13</font>
-						<textcolor>DDFFFFFF</textcolor>
+						<textcolor>FFFFFFFF</textcolor>
 						<focusedcolor>FFFFFFFF</focusedcolor>
 						<align>center</align>
 						<aligny>center</aligny>
-						<texturefocus border="6" colordiffuse="DD555555">white.png</texturefocus>
-						<texturenofocus border="6" colordiffuse="AA333333">white.png</texturenofocus>
+						<texturefocus border="4" colordiffuse="FF888888">white.png</texturefocus>
+						<texturenofocus border="4" colordiffuse="FF3A3A3A">white.png</texturenofocus>
+						<pulseonselect>no</pulseonselect>
+						<onleft>3003</onleft>
+						<onright>3001</onright>
 					</control>
 				</control>
 			</control>
