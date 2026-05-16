@@ -263,7 +263,10 @@ def play_episode(handle, link_id, episode_id, show_id):
 
     # Anime-only: Japanese audio auto-select + skip-intro / playing-next popups.
     # Both are gated on the server having flagged this show as anime.
+    # DIAG (0.4.13): toast for every is_anime branch so the user can see
+    # without logs whether the server flagged this episode anime.
     if info.get("is_anime"):
+        api.notify("DIAG: is_anime=true, spawning watchers")
         if ADDON.getSettingBool("anime_audio_jpn"):
             threading.Thread(target=_select_japanese_audio, daemon=True).start()
         threading.Thread(
@@ -271,6 +274,8 @@ def play_episode(handle, link_id, episode_id, show_id):
             args=(int(show_id), ep_num),
             daemon=True,
         ).start()
+    else:
+        api.notify("DIAG: is_anime=false from /play-episode")
 
 
 def _autoplay_next_watcher(show_id, season_num, episode_num):
@@ -447,11 +452,17 @@ def _anime_skip_watcher(show_id, episode_number):
 
     Both popups self-close when their time windows pass, so we just fire
     each at most once."""
+    api.notify("DIAG: anime watcher started (ep=%s)" % episode_number)
     if not episode_number:
+        api.notify("DIAG: episode_number missing, exit")
         return
     times = aniskip.get_skip_times(show_id, episode_number)
     intro = (times or {}).get("intro") or None
     outro = (times or {}).get("outro") or None
+    api.notify("DIAG: intro=%s outro=%s" % (
+        ("%d-%d" % (int(intro.get('start',0)), int(intro.get('end',0)))) if intro else "none",
+        ("%d-%d" % (int(outro.get('start',0)), int(outro.get('end',0)))) if outro else "none",
+    ))
     if not intro and not outro:
         return  # nothing to do
 

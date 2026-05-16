@@ -314,15 +314,30 @@ class PlayingNextDialog(xbmcgui.WindowDialog):
 
 def show_skip_intro(intro_end):
     """Open the Skip Intro popup (programmatic, non-modal)."""
+    # DIAG (0.4.13): toast + log right before any GUI work, then again on
+    # exception, so we can localize failure to "watcher fired but UI broke"
+    # vs "watcher never fired."
+    xbmcgui.Dialog().notification("movieRec",
+        "DIAG: opening skip-intro popup (end=%ds)" % int(intro_end or 0),
+        xbmcgui.NOTIFICATION_INFO, 3000)
     try:
         SkipIntroDialog(intro_end).show_and_run()
     except Exception as e:
         xbmc.log("[movieRec] skip-intro popup error: %s" % e, xbmc.LOGWARNING)
+        xbmcgui.Dialog().notification("movieRec",
+            "DIAG: skip-intro popup error: %s" % str(e)[:60],
+            xbmcgui.NOTIFICATION_ERROR, 5000)
 
 
 def show_playing_next(outro_end=0):
     """Open the Playing Next popup (programmatic, non-modal)."""
+    xbmcgui.Dialog().notification("movieRec",
+        "DIAG: opening playing-next popup",
+        xbmcgui.NOTIFICATION_INFO, 3000)
     try:
         PlayingNextDialog(outro_end).show_and_run()
     except Exception as e:
         xbmc.log("[movieRec] playing-next popup error: %s" % e, xbmc.LOGWARNING)
+        xbmcgui.Dialog().notification("movieRec",
+            "DIAG: playing-next popup error: %s" % str(e)[:60],
+            xbmcgui.NOTIFICATION_ERROR, 5000)
