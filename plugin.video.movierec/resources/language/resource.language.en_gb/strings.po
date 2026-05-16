@@ -56,6 +56,10 @@ msgctxt "#30015"
 msgid "Items per page"
 msgstr ""
 
+msgctxt "#30016"
+msgid "Auto-play next episode"
+msgstr ""
+
 msgctxt "#30100"
 msgid "Best available"
 msgstr ""

@@ -252,6 +252,110 @@ def play_episode(handle, link_id, episode_id, show_id):
         daemon=True,
     ).start()
 
+    # Auto-play next episode watcher — fires PlayMedia(...) when this episode
+    # ends with progress ≥ 85% (i.e. natural end, not user stop).
+    if ADDON.getSettingBool("autoplay_next_episode") and show_id and season_num and ep_num:
+        threading.Thread(
+            target=_autoplay_next_watcher,
+            args=(int(show_id), int(season_num), int(ep_num)),
+            daemon=True,
+        ).start()
+
+
+def _autoplay_next_watcher(show_id, season_num, episode_num):
+    """Block until playback ends. If ≥85% watched, look up the next episode
+    and trigger PlayMedia. Kodi routes that back through default.py with a
+    fresh handle, so resolve+play happens cleanly."""
+    import sys
+    import urllib.parse as _ulp
+
+    player = xbmc.Player()
+    for _ in range(20):
+        if player.isPlaying():
+            break
+        xbmc.sleep(500)
+    else:
+        return
+
+    duration = 0.0
+    try:
+        duration = player.getTotalTime()
+    except RuntimeError:
+        return
+
+    last_progress = 0.0
+    monitor = xbmc.Monitor()
+    while not monitor.abortRequested() and player.isPlaying():
+        try:
+            cur = player.getTime()
+            if duration <= 0:
+                duration = player.getTotalTime() or 0.0
+        except RuntimeError:
+            break
+        if duration > 0:
+            last_progress = cur / duration * 100.0
+        if monitor.waitForAbort(5):
+            return
+
+    # Playback ended. Only auto-advance on a natural finish.
+    if last_progress < 85.0:
+        return
+
+    nxt = _find_next_episode(show_id, season_num, episode_num)
+    if not nxt:
+        return
+
+    base = sys.argv[0] if sys.argv else "plugin://plugin.video.movierec/"
+    qs = _ulp.urlencode({
+        "action": "play_next_episode",
+        "episode_id": nxt["id"],
+        "show_id": show_id,
+        "season": nxt["season_number"],
+    })
+    url = "%s?%s" % (base, qs)
+    api.notify("Up next: S%02dE%02d %s" % (
+        int(nxt.get("season_number") or 0),
+        int(nxt.get("episode_number") or 0),
+        nxt.get("name") or ""))
+    xbmc.executebuiltin('PlayMedia(%s)' % url)
+
+
+def _find_next_episode(show_id, current_season, current_episode_num):
+    """Return the dict for the next episode in viewing order, or None.
+
+    Tries the current season first; falls back to episode 1 of the next
+    season that has any episodes. Skips specials (season 0)."""
+    try:
+        data = api.get("/shows/%d/seasons/%d" % (show_id, current_season))
+    except api.APIError:
+        data = None
+    if data:
+        for ep in (data.get("episodes") or []):
+            if (ep.get("episode_number") or 0) == current_episode_num + 1:
+                return ep
+
+    # No next episode in this season — try the next non-special season.
+    try:
+        show_data = api.get("/shows/%d" % show_id)
+    except api.APIError:
+        return None
+    seasons = sorted(
+        (s for s in (show_data.get("seasons") or [])
+         if (s.get("season_number") or 0) > current_season
+         and (s.get("episode_count") or 0) > 0),
+        key=lambda s: s.get("season_number") or 0,
+    )
+    for s in seasons:
+        try:
+            sd = api.get("/shows/%d/seasons/%d" % (show_id, s["season_number"]))
+        except api.APIError:
+            continue
+        eps = sd.get("episodes") or []
+        if eps:
+            # Pick the lowest episode number (usually 1).
+            return sorted(eps, key=lambda e: e.get("episode_number") or 0)[0]
+    return None
+
 
 def resolve_and_play(handle, movie_id):
     api.notify("Resolving via Real-Debrid…")

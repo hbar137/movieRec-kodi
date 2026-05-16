@@ -74,6 +74,11 @@ def dispatch(argv):
                                         int(params["episode_id"]),
                                         int(params["show_id"]),
                                         int(params["season"]))
+        elif action == "play_next_episode":
+            views_shows.play_next_episode(handle,
+                                          int(params["episode_id"]),
+                                          int(params["show_id"]),
+                                          int(params["season"]))
         elif action == "search_shows":
             views_shows.search_shows(handle)
         elif action == "search_shows_new":

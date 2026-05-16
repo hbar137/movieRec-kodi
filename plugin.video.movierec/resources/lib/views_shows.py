@@ -347,6 +347,52 @@ def episode_detail(handle, episode_id, show_id, season):
     xbmcplugin.endOfDirectory(handle)
 
 
+def play_next_episode(handle, episode_id, show_id, season):
+    """Auto-play entry point fired by the next-episode watcher.
+
+    Reaches the same destination as picking the episode from the season
+    view: resolves via RD if no links exist yet, then plays the best link
+    by quality_pref."""
+    import time
+    from . import play
+
+    pref = ADDON.getSettingString("quality_pref") or "auto"
+
+    data = api.get("/shows/%d/seasons/%d" % (show_id, season))
+    links_map = data.get("links") or {}
+    ep_links = links_map.get(str(episode_id)) or links_map.get(episode_id) or []
+
+    if not ep_links:
+        api.notify("Resolving next episode…")
+        try:
+            api.post("/realdebrid/resolve-episode/%d" % episode_id, _timeout=120)
+        except api.APIError as e:
+            api.handle_error(e)
+            xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+            return
+        for _ in range(15):
+            try:
+                status = api.get("/realdebrid/resolve-episode-status/%d" % episode_id)
+            except api.APIError:
+                status = {}
+            ep_links = status.get("links") or []
+            if ep_links:
+                break
+            time.sleep(2)
+
+    if not ep_links:
+        api.notify("No cached releases for next episode",
+                   icon=xbmcgui.NOTIFICATION_WARNING)
+        xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+        return
+
+    link = _pick_link(ep_links, pref)
+    if not link:
+        xbmcplugin.setResolvedUrl(handle, False, xbmcgui.ListItem())
+        return
+    play.play_episode(handle, int(link["id"]), int(episode_id), int(show_id))
+
+
 def resolve_episode(handle, episode_id, show_id, season):
     """Trigger RD resolve for one episode, poll until at least one link
     appears, then re-render the season view (now populated)."""

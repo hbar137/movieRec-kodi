@@ -46,6 +46,11 @@
                     <default>true</default>
                     <control type="toggle"/>
                 </setting>
+                <setting id="autoplay_next_episode" type="boolean" label="30016">
+                    <level>0</level>
+                    <default>true</default>
+                    <control type="toggle"/>
+                </setting>
             </group>
         </category>
         <category id="advanced" label="30003">
