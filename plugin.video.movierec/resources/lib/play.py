@@ -509,16 +509,27 @@ def _select_english_subtitle(stream_filename, external_count):
         "params":  {"playerid": 1, "properties": ["subtitles"]},
         "id":      1,
     })
+    # Poll up to ~15s. Externals attached via setSubtitles appear in the
+    # JSON-RPC list immediately, but embedded tracks need Kodi to demux them
+    # from the stream and can lag by several seconds — so when externals
+    # were attached, keep waiting until the total exceeds external_count
+    # (embedded showed up). If no externals were attached, break on first
+    # non-empty response.
+    ext_n_wait = max(0, int(external_count or 0))
     subs = []
-    for _ in range(20):
+    for _ in range(30):
         xbmc.sleep(500)
         try:
             resp = _json.loads(xbmc.executeJSONRPC(query)) or {}
         except Exception:
             continue
         subs = (resp.get("result") or {}).get("subtitles") or []
-        if subs:
-            break
+        if ext_n_wait == 0:
+            if subs:
+                break
+        else:
+            if len(subs) > ext_n_wait:
+                break
     if not subs:
         _notify("Subs: no subtitle streams reported")
         return
