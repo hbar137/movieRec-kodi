@@ -523,14 +523,19 @@ def _select_english_subtitle(stream_filename, external_count):
         _notify("Subs: no subtitle streams reported")
         return
 
+    # External classification: trust Kodi's "(External)" marker (contractual
+    # per xbmc/Util.cpp:2208 — string 21602 appended unconditionally). Index
+    # fallback only kicks in when no entry carries the marker, which suggests
+    # a localized Kodi UI where the word isn't "External".
+    any_marker = any("external" in (s.get("name") or "").lower() for s in subs)
     total = len(subs)
     ext_n = max(0, int(external_count or 0))
-    embed_cutoff = total - ext_n if ext_n else total
+    embed_cutoff = total - ext_n
 
     def _is_external(s):
         name = (s.get("name") or "").lower()
-        if "external" in name:
-            return True
+        if any_marker:
+            return "external" in name
         try:
             idx = int(s.get("index", -1))
         except (TypeError, ValueError):
@@ -540,18 +545,35 @@ def _select_english_subtitle(stream_filename, external_count):
     internals = [s for s in subs if not _is_external(s)]
     externals = [s for s in subs if _is_external(s)]
 
-    for s in internals:
+    # Internal English candidates, ranked: full-dialogue first, partial
+    # coverage (signs/songs/forced) last. 'Signs & Songs' tracks in anime
+    # subtitle only on-screen text + opening/ending lyrics — not what the
+    # user wants for dialogue.
+    def _is_english(s):
         lang = (s.get("language") or "").strip().lower()
         name = (s.get("name") or "").strip().lower()
-        if lang in _EN_TOKENS or any(t in name for t in _EN_TOKENS):
-            try:
-                player.setSubtitleStream(int(s["index"]))
-                player.showSubtitles(True)
-                xbmc.log("[movieRec] subs: embedded eng idx=%s" % s["index"], xbmc.LOGINFO)
-                _notify("Subs: embedded English")
-            except RuntimeError:
-                _notify("Subs: setSubtitleStream failed")
-            return
+        return lang in _EN_TOKENS or any(t in name for t in _EN_TOKENS)
+
+    def _is_partial(s):
+        name = (s.get("name") or "").lower()
+        return any(tag in name for tag in ("sign", "song", "forced"))
+
+    english_internals = [s for s in internals if _is_english(s)]
+    full = [s for s in english_internals if not _is_partial(s)]
+    pick = (full or english_internals or [None])[0]
+    if pick is not None:
+        try:
+            player.setSubtitleStream(int(pick["index"]))
+            player.showSubtitles(True)
+            xbmc.log("[movieRec] subs: embedded eng idx=%s name=%r" %
+                     (pick["index"], pick.get("name")), xbmc.LOGINFO)
+            label = "embedded English"
+            if _is_partial(pick):
+                label += " (partial — no full track)"
+            _notify("Subs: " + label)
+        except RuntimeError:
+            _notify("Subs: setSubtitleStream failed")
+        return
 
     if externals and stream_filename:
         stem = _os.path.splitext(_os.path.basename(stream_filename))[0].lower()
