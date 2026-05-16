@@ -136,9 +136,15 @@ class PlayingNextDialog(xbmcgui.WindowXMLDialog):
 
 
 def show_skip_intro(intro_end):
-    """Open the Skip Intro popup (non-modal). intro_end in seconds."""
+    """Open the Skip Intro popup (non-modal). intro_end in seconds.
+
+    xbmcgui.WindowXMLDialog defaults to defaultSkin='Default', defaultRes='720p'.
+    Our XML lives in resources/skins/Default/1080i/, so we MUST pass the
+    resolution explicitly or Kodi looks in 720p/ (file not found → silent
+    fallback to built-in skin = invisible/broken dialog)."""
     try:
-        dlg = SkipIntroDialog("skip_intro.xml", _addon_path(), intro_end=intro_end)
+        dlg = SkipIntroDialog("skip_intro.xml", _addon_path(), "Default", "1080i",
+                              intro_end=intro_end)
         dlg.doModal()
         del dlg
     except Exception as e:
@@ -148,7 +154,8 @@ def show_skip_intro(intro_end):
 def show_playing_next(outro_end=0):
     """Open the Playing Next popup (non-modal). outro_end in seconds (0 = unknown)."""
     try:
-        dlg = PlayingNextDialog("playing_next.xml", _addon_path(), outro_end=outro_end)
+        dlg = PlayingNextDialog("playing_next.xml", _addon_path(), "Default", "1080i",
+                                outro_end=outro_end)
         dlg.doModal()
         del dlg
     except Exception as e:
