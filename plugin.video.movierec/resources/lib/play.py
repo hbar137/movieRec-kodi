@@ -452,28 +452,43 @@ def _chapter_offsets():
     each percentage of total duration. Source:
       xbmc/guilib/guiinfo/PlayerGUIInfo.cpp::GetChapters
     Same source the Estuary OSD seek bar uses to draw chapter ticks.
+
+    Chapter data populates asynchronously after playback starts (the
+    demuxer state loop fills it in DataCacheCore — see
+    VideoPlayer.cpp::SetChapters), so we poll for up to ~10s.
     """
-    csv = xbmc.getInfoLabel("Player.Chapters") or ""
+    csv = ""
+    cc = 0
+    for _ in range(20):  # 20 * 500ms = 10s
+        csv = xbmc.getInfoLabel("Player.Chapters") or ""
+        try:
+            cc = int(xbmc.getInfoLabel("Player.ChapterCount") or "0")
+        except Exception:
+            cc = 0
+        if csv:
+            break
+        xbmc.sleep(500)
+
     if not csv:
-        return ("none", [])
+        return ("none|cc=%d" % cc, [])
     try:
         nums = [float(x) for x in csv.split(",") if x.strip()]
     except ValueError:
-        return ("err:parse|csv=%s" % csv[:60], [])
+        return ("err:parse|cc=%d|csv=%s" % (cc, csv[:60]), [])
     if len(nums) < 2 or len(nums) % 2 != 0:
-        return ("err:badlen=%d" % len(nums), [])
+        return ("err:badlen=%d|cc=%d" % (len(nums), cc), [])
     try:
         total = int(xbmc.Player().getTotalTime() or 0)
     except RuntimeError:
         total = 0
     if total <= 0:
-        return ("err:nototal", [])
+        return ("err:nototal|cc=%d" % cc, [])
     # CSV layout: (s1%, e1%, s2%, e2%, ...). Chapter starts are the
     # even-indexed entries; convert each from percent to absolute seconds.
     offs = sorted({int(p * total / 100.0) for p in nums[0::2]})
     if not offs:
-        return ("none", [])
-    return ("ok", offs)
+        return ("none|cc=%d" % cc, [])
+    return ("ok|cc=%d" % cc, offs)
 
 
 def _chapter_intro(offs):
