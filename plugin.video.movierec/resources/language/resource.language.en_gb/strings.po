@@ -64,6 +64,10 @@ msgctxt "#30017"
 msgid "Anime: prefer Japanese audio track"
 msgstr ""
 
+msgctxt "#30018"
+msgid "Auto-enable English subtitles"
+msgstr ""
+
 msgctxt "#30100"
 msgid "Best available"
 msgstr ""

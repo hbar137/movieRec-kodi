@@ -56,6 +56,11 @@
                     <default>true</default>
                     <control type="toggle"/>
                 </setting>
+                <setting id="auto_english_subs" type="boolean" label="30018">
+                    <level>0</level>
+                    <default>true</default>
+                    <control type="toggle"/>
+                </setting>
             </group>
         </category>
         <category id="advanced" label="30003">

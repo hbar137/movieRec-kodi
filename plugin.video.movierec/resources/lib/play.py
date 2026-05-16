@@ -128,6 +128,13 @@ def play_link(handle, link_id, movie_id):
 
     xbmcplugin.setResolvedUrl(handle, True, li)
 
+    if ADDON.getSettingBool("auto_english_subs"):
+        threading.Thread(
+            target=_select_english_subtitle,
+            args=(info.get("filename") or "",),
+            daemon=True,
+        ).start()
+
     # Start scrobble watcher in a daemon thread; it lives until playback ends.
     if ADDON.getSettingBool("scrobble_enabled") and info.get("imdb_id"):
         threading.Thread(
@@ -236,6 +243,13 @@ def play_episode(handle, link_id, episode_id, show_id):
         li.setSubtitles(sub_urls)
 
     xbmcplugin.setResolvedUrl(handle, True, li)
+
+    if ADDON.getSettingBool("auto_english_subs"):
+        threading.Thread(
+            target=_select_english_subtitle,
+            args=(info.get("filename") or "",),
+            daemon=True,
+        ).start()
 
     # Trakt scrobble — episode form needs (show_imdb, S, E).
     if (ADDON.getSettingBool("scrobble_enabled")
@@ -459,6 +473,94 @@ def _notify(msg):
         xbmcgui.Dialog().notification("movieRec", msg, xbmcgui.NOTIFICATION_INFO, 3000)
     except Exception:
         pass
+
+
+_SUB_FILE_EXTS = (".srt", ".sub", ".vtt", ".ass", ".ssa", ".idx", ".smi")
+_EN_TOKENS = ("eng", "en", "english")
+
+
+def _select_english_subtitle(stream_filename):
+    """Auto-enable an English subtitle track. Preference order:
+      1) embedded ('internal') English track — name has no sub-file extension
+      2) external sub (attached via li.setSubtitles) whose basename most
+         closely matches the stream filename, ratio >= 0.4
+
+    External tracks attached via li.setSubtitles end up in Kodi's subtitles
+    list with the URL basename as 'name', which always carries a sub
+    extension because _fetch_subtitle_urls forces .srt. That's the
+    discriminator vs embedded tracks (whose name comes from container
+    metadata and never has a file extension)."""
+    import json as _json
+    import os as _os
+    import difflib as _difflib
+
+    player = xbmc.Player()
+    for _ in range(20):
+        if player.isPlaying():
+            break
+        xbmc.sleep(500)
+    else:
+        return
+    query = _json.dumps({
+        "jsonrpc": "2.0",
+        "method":  "Player.GetProperties",
+        "params":  {"playerid": 1, "properties": ["subtitles"]},
+        "id":      1,
+    })
+    subs = []
+    for _ in range(20):
+        xbmc.sleep(500)
+        try:
+            resp = _json.loads(xbmc.executeJSONRPC(query)) or {}
+        except Exception:
+            continue
+        subs = (resp.get("result") or {}).get("subtitles") or []
+        if subs:
+            break
+    if not subs:
+        _notify("Subs: no subtitle streams reported")
+        return
+
+    def _is_external(s):
+        return (s.get("name") or "").strip().lower().endswith(_SUB_FILE_EXTS)
+
+    internals = [s for s in subs if not _is_external(s)]
+    externals = [s for s in subs if _is_external(s)]
+
+    for s in internals:
+        lang = (s.get("language") or "").strip().lower()
+        name = (s.get("name") or "").strip().lower()
+        if lang in _EN_TOKENS or any(t in name for t in _EN_TOKENS):
+            try:
+                player.setSubtitleStream(int(s["index"]))
+                player.showSubtitles(True)
+                xbmc.log("[movieRec] subs: embedded eng idx=%s" % s["index"], xbmc.LOGINFO)
+                _notify("Subs: embedded English")
+            except RuntimeError:
+                _notify("Subs: setSubtitleStream failed")
+            return
+
+    if externals and stream_filename:
+        stem = _os.path.splitext(_os.path.basename(stream_filename))[0].lower()
+        best, best_ratio = None, 0.0
+        for s in externals:
+            name = (s.get("name") or "").lower()
+            base = _os.path.splitext(name)[0]
+            r = _difflib.SequenceMatcher(None, stem, base).ratio()
+            if r > best_ratio:
+                best, best_ratio = s, r
+        if best and best_ratio >= 0.4:
+            try:
+                player.setSubtitleStream(int(best["index"]))
+                player.showSubtitles(True)
+                xbmc.log("[movieRec] subs: external '%s' ratio=%.2f idx=%s" %
+                         (best.get("name"), best_ratio, best["index"]), xbmc.LOGINFO)
+                _notify("Subs: external (%.0f%% match)" % (best_ratio * 100))
+            except RuntimeError:
+                _notify("Subs: setSubtitleStream failed")
+            return
+
+    _notify("Subs: no English match — pick manually")
 
 
 def _anime_skip_watcher(show_id, episode_number):
