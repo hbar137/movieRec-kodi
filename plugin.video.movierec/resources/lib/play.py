@@ -404,9 +404,10 @@ def resolve_and_play(handle, movie_id):
 # ───────────────────────────────────────────────────────────────────────
 
 def _select_japanese_audio():
-    """Wait for playback to actually start, query Kodi for audio streams via
-    JSON-RPC, and call setAudioStream(idx) on the first Japanese track.
-    Mirrors Otaku's player.py:362-409 behavior. No-op when no jpn track."""
+    """Wait for playback to actually start, poll Kodi for audio streams via
+    JSON-RPC until they populate, and call setAudioStream(idx) on the first
+    Japanese track. Shows a Kodi notification with the result so the user
+    can see what happened without log access."""
     import json as _json
     player = xbmc.Player()
     for _ in range(20):
@@ -414,31 +415,50 @@ def _select_japanese_audio():
             break
         xbmc.sleep(500)
     else:
+        _notify("Anime: playback never started")
         return
-    # Give Kodi a beat to actually populate audiostreams metadata.
-    xbmc.sleep(1500)
     query = _json.dumps({
         "jsonrpc": "2.0",
         "method":  "Player.GetProperties",
         "params":  {"playerid": 1, "properties": ["audiostreams"]},
         "id":      1,
     })
-    try:
-        resp = _json.loads(xbmc.executeJSONRPC(query)) or {}
-    except Exception:
-        return
-    streams = (resp.get("result") or {}).get("audiostreams") or []
+    # Poll for audiostreams to populate — large/remote files often need
+    # several seconds after isPlaying() before Kodi exposes track metadata.
+    streams = []
+    for _ in range(20):
+        xbmc.sleep(500)
+        try:
+            resp = _json.loads(xbmc.executeJSONRPC(query)) or {}
+        except Exception:
+            continue
+        streams = (resp.get("result") or {}).get("audiostreams") or []
+        if streams:
+            break
     if not streams:
+        _notify("Anime: no audio streams reported")
         return
+    jp_tokens = ("jpn", "ja", "jp", "japanese")
     for s in streams:
-        if (s.get("language") or "").lower() == "jpn":
+        lang = (s.get("language") or "").strip().lower()
+        name = (s.get("name") or "").strip().lower()
+        if lang in jp_tokens or any(t in name for t in jp_tokens):
             try:
                 player.setAudioStream(int(s["index"]))
                 xbmc.log("[movieRec] audio: selected jpn stream idx=%s" % s["index"],
                          xbmc.LOGINFO)
+                _notify("Anime: switched to Japanese audio")
             except RuntimeError:
-                pass
+                _notify("Anime: setAudioStream failed")
             return
+    _notify("Anime: no Japanese audio found")
+
+
+def _notify(msg):
+    try:
+        xbmcgui.Dialog().notification("movieRec", msg, xbmcgui.NOTIFICATION_INFO, 3000)
+    except Exception:
+        pass
 
 
 def _anime_skip_watcher(show_id, episode_number):
