@@ -443,13 +443,13 @@ def _select_japanese_audio():
 
 
 def _chapter_offsets():
-    """Return a sorted list of unique chapter start offsets in seconds, or [].
+    """Return a (status, [chapter_start_seconds]) tuple.
 
-    Uses JSON-RPC Player.GetProperties(chapters) — the only reliable way to
-    read chapter timing from a Python addon. Kodi returns offsets in seconds
-    (float, can include fractional).
+    Uses JSON-RPC Player.GetChapters — a dedicated method, NOT a property of
+    Player.GetProperties (that property name doesn't exist). Each chapter
+    object is {"index": <1-based int>, "name": <str>, "time": <int seconds>}.
+    See xbmc/interfaces/json-rpc/schema/{methods,types}.json.
     """
-    raw = ""
     try:
         # Resolve the active video playerid first; hardcoding 1 fails when
         # Kodi has rotated players (audio→video).
@@ -467,8 +467,8 @@ def _chapter_offsets():
             pid = 1  # fall back to canonical video playerid
 
         raw = xbmc.executeJSONRPC(json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "Player.GetProperties",
-            "params": {"playerid": pid, "properties": ["chapters"]},
+            "jsonrpc": "2.0", "id": 1, "method": "Player.GetChapters",
+            "params": {"playerid": pid},
         }))
         data = json.loads(raw or "{}") or {}
         chapters = ((data.get("result") or {}).get("chapters")) or []
@@ -476,8 +476,11 @@ def _chapter_offsets():
         return ("err:%s" % e, [])
     offs = []
     for c in chapters:
+        t = (c or {}).get("time")
+        if t is None:
+            continue
         try:
-            offs.append(int(float(c.get("offset") or 0)))
+            offs.append(int(t))
         except Exception:
             pass
     offs = sorted(set(offs))
