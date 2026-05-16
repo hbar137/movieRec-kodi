@@ -483,9 +483,21 @@ def _chapter_offsets():
         total = 0
     if total <= 0:
         return ("err:nototal|cc=%d" % cc, [])
-    # CSV layout: (s1%, e1%, s2%, e2%, ...). Chapter starts are the
-    # even-indexed entries; convert each from percent to absolute seconds.
-    offs = sorted({int(p * total / 100.0) for p in nums[0::2]})
+    # CSV layout: pairs of (range_start%, range_end%). Each pair is one
+    # chapter's span: range_start = this chapter's start, range_end =
+    # next chapter's start. Kodi SKIPS emitting the first chapter when it
+    # starts at 0% (see PlayerGUIInfo.cpp `if (marker != 0.0f)`), so for
+    # N chapters with ch1 at 0 there are N-1 ranges and the very last
+    # value in the CSV is the start of chapter N — which `nums[0::2]`
+    # alone would miss. Take ALL boundary values, dedupe, sort.
+    raw_sec = [p * total / 100.0 for p in nums]
+    # Collapse near-duplicates (≤2s apart) so a sub-second title-card
+    # chapter doesn't fold into the next real chapter's bucket.
+    offs = []
+    for s in sorted(raw_sec):
+        i = int(round(s))
+        if not offs or i - offs[-1] > 2:
+            offs.append(i)
     if not offs:
         return ("none|cc=%d" % cc, [])
     return ("ok|cc=%d" % cc, offs)
@@ -610,11 +622,20 @@ def _anime_skip_watcher(show_id, episode_number):
 
     # ── One-shot diagnostic toast so the TV shows what we decided. ──
     # ch_status is one of: "ok", "none", "skipped", "err:<msg>".
-    # Single notification per playback — not the 7-toast spam from v0.4.18.
+    # Surfaces the actual mm:ss times so they can be eyeballed against the
+    # chapter markers visible in the OSD seek bar.
     try:
+        def _hms(s):
+            s = int(s or 0)
+            return "%d:%02d" % (s // 60, s % 60)
         ch_msg = "ch=%s(%d)" % (ch_status, len(chapters)) if chapters else "ch=%s" % ch_status
-        msg = "%s | intro=%s outro=%s" % (ch_msg, intro_source, outro_source)
-        xbmcgui.Dialog().notification("movieRec skip", msg, time=8000, sound=False)
+        intro_msg = "%s@%s-%s" % (intro_source, _hms(intro_start), _hms(intro_end))
+        if outro_start_t:
+            outro_msg = "%s@%s-%s" % (outro_source, _hms(outro_start_t), _hms(outro_end_aniskip))
+        else:
+            outro_msg = "%s@%s" % (outro_source, _hms(max(total_time - playnext_lead, 0)))
+        msg = "%s | i:%s o:%s" % (ch_msg, intro_msg, outro_msg)
+        xbmcgui.Dialog().notification("movieRec skip", msg, time=20000, sound=False)
     except Exception:
         pass
 
