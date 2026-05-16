@@ -1,4 +1,5 @@
 """Resolve a debrid link, hand the stream URL to Kodi, attach subtitles, and scrobble."""
+import json
 import threading
 import time
 
@@ -441,6 +442,66 @@ def _select_japanese_audio():
             return
 
 
+def _chapter_offsets():
+    """Return a sorted list of unique chapter start offsets in seconds, or [].
+
+    Uses JSON-RPC Player.GetProperties(chapters) — the only reliable way to
+    read chapter timing from a Python addon. Kodi returns offsets in seconds
+    (float, can include fractional).
+    """
+    try:
+        resp = xbmc.executeJSONRPC(json.dumps({
+            "jsonrpc": "2.0", "id": 1, "method": "Player.GetProperties",
+            "params": {"playerid": 1, "properties": ["chapters"]},
+        }))
+        data = json.loads(resp or "{}") or {}
+        chapters = ((data.get("result") or {}).get("chapters")) or []
+    except Exception:
+        return []
+    offs = []
+    for c in chapters:
+        try:
+            offs.append(int(float(c.get("offset") or 0)))
+        except Exception:
+            pass
+    offs = sorted(set(offs))
+    return offs
+
+
+def _chapter_intro(offs):
+    """Pick (start, end) for the intro song from chapter offsets, else None.
+
+    Heuristic: ch2 is the intro song, so intro = [offs[1], offs[2]).
+    Sanity: intro must start within first 5 min, last 30s–3min.
+    """
+    if len(offs) < 4:
+        return None
+    start, end = offs[1], offs[2]
+    if start > 300 or end <= start:
+        return None
+    dur = end - start
+    if dur < 30 or dur > 180:
+        return None
+    return (start, end)
+
+
+def _chapter_outro(offs, total):
+    """Pick (start, end) for the outro song from chapter offsets, else None.
+
+    Heuristic: second-to-last chapter is the outro, outro = [offs[-2], offs[-1]).
+    Sanity: outro must start within last 5 min, last 30s–3min.
+    """
+    if len(offs) < 4 or total <= 0:
+        return None
+    start, end = offs[-2], offs[-1]
+    if start < total - 300 or end <= start:
+        return None
+    dur = end - start
+    if dur < 30 or dur > 180:
+        return None
+    return (start, end)
+
+
 def _anime_skip_watcher(show_id, episode_number):
     """Port of Otaku's ui/player.py _handle_skip_intro +
     _handle_outro_and_playing_next combined into one watcher thread.
@@ -475,15 +536,28 @@ def _anime_skip_watcher(show_id, episode_number):
     else:
         return
 
+    # Chapter offsets are stable once playback starts; query once and reuse
+    # for both intro and outro fallback paths.
+    chapters = _chapter_offsets() if (not aniskip_intro or not aniskip_outro) else []
+    try:
+        total_time = int(player.getTotalTime() or 0)
+    except RuntimeError:
+        total_time = 0
+
     # ── Intro window (Otaku _handle_skip_intro) ──
     if aniskip_intro and aniskip_intro.get("end"):
         intro_start = int(aniskip_intro.get("start") or 0)
         intro_end   = int(aniskip_intro["end"])
         intro_is_aniskip = True
     else:
-        intro_start = _ctl.getInt("skipintro.delay") or 1
-        intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
-        intro_is_aniskip = False
+        ch_intro = _chapter_intro(chapters)
+        if ch_intro:
+            intro_start, intro_end = ch_intro
+            intro_is_aniskip = True  # absolute seek to chapter-derived end
+        else:
+            intro_start = _ctl.getInt("skipintro.delay") or 1
+            intro_end   = intro_start + _ctl.getInt("skipintro.duration") * 60
+            intro_is_aniskip = False
 
     # ── Outro / playing-next window (Otaku _handle_outro_and_playing_next) ──
     playnext_lead = _ctl.getInt("playingnext.time") or 30
@@ -494,8 +568,13 @@ def _anime_skip_watcher(show_id, episode_number):
         outro_end_aniskip = int(aniskip_outro.get("end") or 0)
         playnext_kind = "outro"  # use skip_outro_default.xml
     else:
-        outro_start_t = 0
-        playnext_kind = "next"   # use playing_next_default.xml
+        ch_outro = _chapter_outro(chapters, total_time)
+        if ch_outro:
+            outro_start_t, outro_end_aniskip = ch_outro
+            playnext_kind = "outro"  # chapter-derived end → Skip Outro button works
+        else:
+            outro_start_t = 0
+            playnext_kind = "next"   # use playing_next_default.xml
 
     intro_shown = False
     next_shown  = False
