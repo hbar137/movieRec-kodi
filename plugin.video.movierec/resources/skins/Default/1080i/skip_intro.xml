@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window>
+	<!-- Non-modal popup shown by SkipIntro Python class during the intro
+	     window of an anime episode. Sits bottom-right; two buttons:
+	     3001 = Skip Intro, 3002 = Close. The video continues playing
+	     behind the popup (no Dialog.yesno blocking). -->
+	<defaultcontrol always="true">3001</defaultcontrol>
+	<onload>Dialog.Close(fullscreeninfo,true)</onload>
+	<onload>Dialog.Close(videoosd,true)</onload>
+	<controls>
+		<control type="group">
+			<animation type="WindowOpen" reversible="false">
+				<effect type="fade" start="0" end="100" time="250"/>
+				<effect type="slide" start="600,0" end="0,0" time="300"/>
+			</animation>
+			<animation type="WindowClose" reversible="false">
+				<effect type="fade" start="100" end="0" time="200"/>
+				<effect type="slide" start="0,0" end="600,0" time="250"/>
+			</animation>
+			<control type="group">
+				<right>40</right>
+				<bottom>120</bottom>
+				<width>420</width>
+				<height>72</height>
+				<!-- Background panel -->
+				<control type="image">
+					<width>100%</width>
+					<height>100%</height>
+					<texture border="6" colordiffuse="DD1A1A1A">white.png</texture>
+				</control>
+				<control type="grouplist">
+					<orientation>horizontal</orientation>
+					<height>56</height>
+					<width>400</width>
+					<top>8</top>
+					<left>10</left>
+					<itemgap>8</itemgap>
+					<control type="button" id="3001">
+						<label>Skip Intro</label>
+						<height>56</height>
+						<width>240</width>
+						<font>font13</font>
+						<textcolor>FFFFFFFF</textcolor>
+						<focusedcolor>FFFFFFFF</focusedcolor>
+						<align>center</align>
+						<aligny>center</aligny>
+						<texturefocus border="6" colordiffuse="FF1E88E5">white.png</texturefocus>
+						<texturenofocus border="6" colordiffuse="DD2962FF">white.png</texturenofocus>
+					</control>
+					<control type="button" id="3002">
+						<label>Close</label>
+						<height>56</height>
+						<width>140</width>
+						<font>font13</font>
+						<textcolor>DDFFFFFF</textcolor>
+						<focusedcolor>FFFFFFFF</focusedcolor>
+						<align>center</align>
+						<aligny>center</aligny>
+						<texturefocus border="6" colordiffuse="DD555555">white.png</texturefocus>
+						<texturenofocus border="6" colordiffuse="AA333333">white.png</texturenofocus>
+					</control>
+				</control>
+			</control>
+		</control>
+	</controls>
+</window>

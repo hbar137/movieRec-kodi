@@ -51,6 +51,11 @@
                     <default>true</default>
                     <control type="toggle"/>
                 </setting>
+                <setting id="anime_audio_jpn" type="boolean" label="30017">
+                    <level>0</level>
+                    <default>true</default>
+                    <control type="toggle"/>
+                </setting>
             </group>
         </category>
         <category id="advanced" label="30003">

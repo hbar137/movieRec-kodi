@@ -7,7 +7,7 @@ import xbmcaddon
 import xbmcgui
 import xbmcplugin
 
-from . import api, scrobble, progress as progress_mod
+from . import api, scrobble, progress as progress_mod, aniskip, skip_windows
 
 ADDON = xbmcaddon.Addon()
 
@@ -261,6 +261,17 @@ def play_episode(handle, link_id, episode_id, show_id):
             daemon=True,
         ).start()
 
+    # Anime-only: Japanese audio auto-select + skip-intro / playing-next popups.
+    # Both are gated on the server having flagged this show as anime.
+    if info.get("is_anime"):
+        if ADDON.getSettingBool("anime_audio_jpn"):
+            threading.Thread(target=_select_japanese_audio, daemon=True).start()
+        threading.Thread(
+            target=_anime_skip_watcher,
+            args=(int(show_id), ep_num),
+            daemon=True,
+        ).start()
+
 
 def _autoplay_next_watcher(show_id, season_num, episode_num):
     """Block until playback ends. If ≥85% watched, look up the next episode
@@ -384,3 +395,119 @@ def resolve_and_play(handle, movie_id):
         return
 
     play_link(handle, link["id"], movie_id)
+
+
+# ───────────────────────────────────────────────────────────────────────
+# Anime-only: Japanese audio auto-select + skip-intro / playing-next
+# ───────────────────────────────────────────────────────────────────────
+
+def _select_japanese_audio():
+    """Wait for playback to actually start, query Kodi for audio streams via
+    JSON-RPC, and call setAudioStream(idx) on the first Japanese track.
+    Mirrors Otaku's player.py:362-409 behavior. No-op when no jpn track."""
+    import json as _json
+    player = xbmc.Player()
+    for _ in range(20):
+        if player.isPlaying():
+            break
+        xbmc.sleep(500)
+    else:
+        return
+    # Give Kodi a beat to actually populate audiostreams metadata.
+    xbmc.sleep(1500)
+    query = _json.dumps({
+        "jsonrpc": "2.0",
+        "method":  "Player.GetProperties",
+        "params":  {"playerid": 1, "properties": ["audiostreams"]},
+        "id":      1,
+    })
+    try:
+        resp = _json.loads(xbmc.executeJSONRPC(query)) or {}
+    except Exception:
+        return
+    streams = (resp.get("result") or {}).get("audiostreams") or []
+    if not streams:
+        return
+    for s in streams:
+        if (s.get("language") or "").lower() == "jpn":
+            try:
+                player.setAudioStream(int(s["index"]))
+                xbmc.log("[movieRec] audio: selected jpn stream idx=%s" % s["index"],
+                         xbmc.LOGINFO)
+            except RuntimeError:
+                pass
+            return
+
+
+def _anime_skip_watcher(show_id, episode_number):
+    """Fetch aniskip times for this episode (anime only), then monitor the
+    player and pop the skip-intro / playing-next dialogs at the right
+    times. All UI work happens on the main thread via Kodi's dialog
+    machinery; this thread only fetches data and decides WHEN to show.
+
+    Both popups self-close when their time windows pass, so we just fire
+    each at most once."""
+    if not episode_number:
+        return
+    times = aniskip.get_skip_times(show_id, episode_number)
+    intro = (times or {}).get("intro") or None
+    outro = (times or {}).get("outro") or None
+    if not intro and not outro:
+        return  # nothing to do
+
+    player = xbmc.Player()
+    for _ in range(20):
+        if player.isPlaying():
+            break
+        xbmc.sleep(500)
+    else:
+        return
+
+    intro_shown = False
+    next_shown  = False
+    monitor = xbmc.Monitor()
+
+    try:
+        total = int(player.getTotalTime() or 0)
+    except RuntimeError:
+        return
+    # Show "Playing Next" panel ~30s before the end OR at outro start,
+    # whichever is earlier. Keeps the UX consistent with Otaku.
+    playnext_at = max(total - 30, 0)
+    if outro and outro.get("start") and outro["start"] > 0:
+        playnext_at = min(playnext_at, int(outro["start"]))
+
+    while not monitor.abortRequested() and player.isPlaying():
+        try:
+            cur = int(player.getTime())
+        except RuntimeError:
+            break
+
+        # Skip-Intro popup
+        if not intro_shown and intro and intro.get("end"):
+            start = int(intro.get("start") or 0)
+            end   = int(intro["end"])
+            if start <= cur < end:
+                intro_shown = True
+                # show_skip_intro blocks on its own doModal; run on a
+                # short-lived daemon so this watcher loop stays alive.
+                threading.Thread(
+                    target=skip_windows.show_skip_intro,
+                    args=(end,),
+                    daemon=True,
+                ).start()
+
+        # Playing-Next popup
+        if not next_shown and cur >= playnext_at and total - cur > 2:
+            next_shown = True
+            outro_end = int((outro or {}).get("end") or 0)
+            threading.Thread(
+                target=skip_windows.show_playing_next,
+                args=(outro_end,),
+                daemon=True,
+            ).start()
+
+        if intro_shown and next_shown:
+            break
+        if monitor.waitForAbort(2):
+            break

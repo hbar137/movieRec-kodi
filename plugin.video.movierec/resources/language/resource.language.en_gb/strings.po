@@ -60,6 +60,10 @@ msgctxt "#30016"
 msgid "Auto-play next episode"
 msgstr ""
 
+msgctxt "#30017"
+msgid "Anime: prefer Japanese audio track"
+msgstr ""
+
 msgctxt "#30100"
 msgid "Best available"
 msgstr ""
