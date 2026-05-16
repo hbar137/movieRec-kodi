@@ -444,7 +444,6 @@ def _select_japanese_audio():
                 player.setAudioStream(int(s["index"]))
                 xbmc.log("[movieRec] audio: selected jpn stream idx=%s" % s["index"],
                          xbmc.LOGINFO)
-                _notify("Anime: switched to Japanese audio")
             except RuntimeError:
                 _notify("Anime: setAudioStream failed")
             return
@@ -561,10 +560,6 @@ def _select_english_subtitle(stream_filename, external_count):
             player.showSubtitles(True)
             xbmc.log("[movieRec] subs: embedded eng idx=%s name=%r" %
                      (pick["index"], pick.get("name")), xbmc.LOGINFO)
-            label = "embedded English"
-            if _is_partial(pick):
-                label += " (partial — no full track)"
-            _notify("Subs: " + label)
         except RuntimeError:
             _notify("Subs: setSubtitleStream failed")
         return
@@ -584,7 +579,6 @@ def _select_english_subtitle(stream_filename, external_count):
                 player.showSubtitles(True)
                 xbmc.log("[movieRec] subs: external '%s' ratio=%.2f idx=%s" %
                          (best.get("name"), best_ratio, best["index"]), xbmc.LOGINFO)
-                _notify("Subs: external (%.0f%% match)" % (best_ratio * 100))
             except RuntimeError:
                 _notify("Subs: setSubtitleStream failed")
             return
