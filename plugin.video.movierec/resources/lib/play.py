@@ -1,5 +1,4 @@
 """Resolve a debrid link, hand the stream URL to Kodi, attach subtitles, and scrobble."""
-import json
 import threading
 import time
 
@@ -443,47 +442,35 @@ def _select_japanese_audio():
 
 
 def _chapter_offsets():
-    """Return a (status, [chapter_start_seconds]) tuple.
+    """Return (status, [chapter_start_seconds]) read via Player.Chapters infolabel.
 
-    Uses JSON-RPC Player.GetChapters — a dedicated method, NOT a property of
-    Player.GetProperties (that property name doesn't exist). Each chapter
-    object is {"index": <1-based int>, "name": <str>, "time": <int seconds>}.
-    See xbmc/interfaces/json-rpc/schema/{methods,types}.json.
+    JSON-RPC chapter access (Player.GetChapters method) was only added on
+    Kodi master 2025-12-06 and is not in any released Kodi (Omega/Nexus).
+    The infolabel route works since v19.
+
+    Player.Chapters is a CSV of "start%,end%,start%,end%,..." per chapter,
+    each percentage of total duration. Source:
+      xbmc/guilib/guiinfo/PlayerGUIInfo.cpp::GetChapters
+    Same source the Estuary OSD seek bar uses to draw chapter ticks.
     """
+    csv = xbmc.getInfoLabel("Player.Chapters") or ""
+    if not csv:
+        return ("none", [])
     try:
-        # Resolve the active video playerid first; hardcoding 1 fails when
-        # Kodi has rotated players (audio→video).
-        pid_resp = xbmc.executeJSONRPC(json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "Player.GetActivePlayers",
-        }))
-        pid_data = json.loads(pid_resp or "{}") or {}
-        players = (pid_data.get("result") or [])
-        pid = None
-        for p in players:
-            if (p or {}).get("type") == "video":
-                pid = p.get("playerid")
-                break
-        if pid is None:
-            pid = 1  # fall back to canonical video playerid
-
-        raw = xbmc.executeJSONRPC(json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": "Player.GetChapters",
-            "params": {"playerid": pid},
-        }))
-        data = json.loads(raw or "{}") or {}
-        chapters = ((data.get("result") or {}).get("chapters")) or []
-    except Exception as e:
-        return ("err:%s" % e, [])
-    offs = []
-    for c in chapters:
-        t = (c or {}).get("time")
-        if t is None:
-            continue
-        try:
-            offs.append(int(t))
-        except Exception:
-            pass
-    offs = sorted(set(offs))
+        nums = [float(x) for x in csv.split(",") if x.strip()]
+    except ValueError:
+        return ("err:parse|csv=%s" % csv[:60], [])
+    if len(nums) < 2 or len(nums) % 2 != 0:
+        return ("err:badlen=%d" % len(nums), [])
+    try:
+        total = int(xbmc.Player().getTotalTime() or 0)
+    except RuntimeError:
+        total = 0
+    if total <= 0:
+        return ("err:nototal", [])
+    # CSV layout: (s1%, e1%, s2%, e2%, ...). Chapter starts are the
+    # even-indexed entries; convert each from percent to absolute seconds.
+    offs = sorted({int(p * total / 100.0) for p in nums[0::2]})
     if not offs:
         return ("none", [])
     return ("ok", offs)
