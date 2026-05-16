@@ -595,7 +595,26 @@ def _select_english_subtitle(stream_filename, external_count):
                 _notify("Subs: setSubtitleStream failed")
             return
 
-    _notify("Subs: no English match — pick manually")
+    # Diagnostic: no English match found. Dump what Kodi actually reported
+    # so the user can see lang/name values without log access.
+    _notify("Subs: no match. int=%d ext=%d total=%d" %
+            (len(internals), len(externals), len(subs)))
+    xbmc.sleep(3200)
+    for i, s in enumerate(internals[:4]):
+        lang = (s.get("language") or "").strip() or "''"
+        nm = (s.get("name") or "").strip() or "''"
+        if len(nm) > 40:
+            nm = nm[:40] + "…"
+        _notify("int#%d idx=%s lang=%s | %s" % (i, s.get("index"), lang, nm))
+        xbmc.sleep(3200)
+    if not internals and externals:
+        for i, s in enumerate(externals[:3]):
+            lang = (s.get("language") or "").strip() or "''"
+            nm = (s.get("name") or "").strip() or "''"
+            if len(nm) > 40:
+                nm = nm[:40] + "…"
+            _notify("ext#%d idx=%s lang=%s | %s" % (i, s.get("index"), lang, nm))
+            xbmc.sleep(3200)
 
 
 def _anime_skip_watcher(show_id, episode_number):
