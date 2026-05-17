@@ -283,11 +283,18 @@ def season_detail(handle, show_id, season):
         # specifically this matters: the server only pre-resolves the top
         # 1 candidate to avoid tripping RD's per-account anti-probe — so
         # the context menu is the way to access alternatives.
-        ctx_pick = (
+        ctx_items = [(
             "Pick a release...",
             "RunPlugin(%s)" % _url(action="pick_release", episode_id=eid, show_id=show_id, season=season),
-        )
-        li.addContextMenuItems([ctx_pick])
+        )]
+        # Anime-only: no-RD fallback that hits the embed-resolver sidecar.
+        # Only meaningful for anime shows we have a MAL id for.
+        if show.get("is_anime") and show.get("mal_id"):
+            ctx_items.append((
+                "Pick embed source...",
+                "RunPlugin(%s)" % _url(action="pick_embed_source", episode_id=eid, show_id=show_id, season=season),
+            ))
+        li.addContextMenuItems(ctx_items)
 
         if ep_links:
             link = _pick_link(ep_links, pref)
@@ -668,6 +675,24 @@ def pick_release(handle, episode_id, show_id, season):
     progress.close()
     candidates = (data or {}).get("candidates") or []
     if not candidates:
+        # If this is anime, give the user a one-tap escape into the
+        # embed-source picker (no-RD fallback). We have to look up the
+        # show's anime flag separately — pick_release was traditionally
+        # episode-only.
+        try:
+            show_meta = (api.get("/shows/%d" % show_id).get("show") or {})
+        except api.APIError:
+            show_meta = {}
+        if show_meta.get("is_anime") and show_meta.get("mal_id"):
+            ask = xbmcgui.Dialog().yesno(
+                "movieRec",
+                "No cached releases. Try embed sources instead?",
+                yeslabel="Embed sources", nolabel="Cancel")
+            if ask:
+                xbmc.executebuiltin("RunPlugin(%s)" % _url(
+                    action="pick_embed_source", episode_id=episode_id,
+                    show_id=show_id, season=season))
+            return
         xbmcgui.Dialog().notification("movieRec", "No cached releases found",
                                        xbmcgui.NOTIFICATION_WARNING, 3500)
         return
@@ -835,4 +860,7 @@ def pick_embed_source(handle, episode_id, show_id, season):
     if subs:
         li.setSubtitles([s["url"] for s in subs if s.get("url")])
 
-    xbmcplugin.setResolvedUrl(handle, True, li)
+    # We're invoked via RunPlugin from a context menu (handle == -1), so
+    # setResolvedUrl is a no-op. Start playback directly through the
+    # Kodi player API instead.
+    xbmc.Player().play(play_url, li)
