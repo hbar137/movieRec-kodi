@@ -76,6 +76,25 @@
                     <control type="slider" format="integer"/>
                 </setting>
             </group>
+            <!-- Hidden schema-only keys required by the vendored Otaku
+                 scrapers (resources/lib/otaku_scrapers/). They're hidden
+                 from the user UI but must exist so Otaku's setStringList
+                 / setBool writes don't raise TypeError. Reads of any
+                 OTHER Otaku setting key we haven't declared safely
+                 return defaults (False/0/empty), so we only declare the
+                 keys that get *written*. -->
+            <group id="2" label="30099">
+                <setting id="embed.config" type="list[string]" label="30099">
+                    <level>4</level>
+                    <default>doodstream|filelions|filemoon|hd-1|hd-2|hd-3|iga|kwik|megacloud|megaf|moonf|mp4upload|mp4u|mycloud|noads|noadsalt|swish|streamtape|streamwish|t-cloud|vidcdn|vidhide|vidplay|vidsrc|vidstream|yourupload|zto</default>
+                    <control type="edit" format="string"/>
+                </setting>
+                <setting id="best_match" type="boolean" label="30099">
+                    <level>4</level>
+                    <default>false</default>
+                    <control type="toggle"/>
+                </setting>
+            </group>
         </category>
     </section>
 </settings>
