@@ -288,8 +288,10 @@ def season_detail(handle, show_id, season):
             "RunPlugin(%s)" % _url(action="pick_release", episode_id=eid, show_id=show_id, season=season),
         )]
         # Anime-only: no-RD fallback that hits the embed-resolver sidecar.
-        # Only meaningful for anime shows we have a MAL id for.
-        if show.get("is_anime") and show.get("mal_id"):
+        # MAL id is optional — the sidecar falls through to title-based
+        # search when missing, which is needed for shows Fribb's
+        # anime-list-mini doesn't have (e.g. "African Office Worker").
+        if show.get("is_anime"):
             ctx_items.append((
                 "Pick embed source...",
                 "RunPlugin(%s)" % _url(action="pick_embed_source", episode_id=eid, show_id=show_id, season=season),
@@ -346,7 +348,7 @@ def episode_detail(handle, episode_id, show_id, season):
         # Anime-only: also offer the embed-sources fallback for shows
         # where RD has nothing cached (e.g. "African Office Worker").
         # Backend hits the anime-resolver sidecar which vendors Otaku.
-        if is_anime and show_meta.get("mal_id"):
+        if is_anime:
             li = xbmcgui.ListItem(label="[B]» Pick embed source (no-RD fallback)[/B]")
             url = _url(action="pick_embed_source", episode_id=episode_id, show_id=show_id, season=season)
             xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
@@ -683,7 +685,7 @@ def pick_release(handle, episode_id, show_id, season):
             show_meta = (api.get("/shows/%d" % show_id).get("show") or {})
         except api.APIError:
             show_meta = {}
-        if show_meta.get("is_anime") and show_meta.get("mal_id"):
+        if show_meta.get("is_anime"):
             ask = xbmcgui.Dialog().yesno(
                 "movieRec",
                 "No cached releases. Try embed sources instead?",
