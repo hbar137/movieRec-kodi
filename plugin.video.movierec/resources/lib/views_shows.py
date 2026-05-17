@@ -831,28 +831,51 @@ def pick_embed_source(handle, episode_id, show_id, season):
     progress = xbmcgui.DialogProgressBG()
     progress.create("movieRec", "Scraping embed sources…")
 
+    import time as _time
+
     def _run(name_cls):
         name, cls = name_cls
+        t0 = _time.monotonic()
         try:
             out = cls().get_sources(mal_id, ep_num) or []
+            dt = _time.monotonic() - t0
+            otaku_control.log(f"[embed] {name} → {len(out)} sources in {dt:.1f}s")
+            return name, out, None, dt
         except Exception as e:
-            otaku_control.log(f"{name}: {type(e).__name__}: {e}")
-            return name, []
-        for s in out:
-            s.setdefault("provider", name)
-        return name, out
+            dt = _time.monotonic() - t0
+            otaku_control.log(f"[embed] {name} → ERROR {type(e).__name__}: {e} in {dt:.1f}s")
+            return name, [], f"{type(e).__name__}: {str(e)[:60]}", dt
 
     sources = []
+    # Provider name → result tuple (count, error_string_or_None, seconds)
+    provider_summary = {}
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(provider_cls)) as ex:
-            for _name, items in ex.map(_run, provider_cls.items()):
+            for name, items, err, dt in ex.map(_run, provider_cls.items()):
+                provider_summary[name] = (len(items), err, dt)
+                for s in items:
+                    s.setdefault("provider", name)
                 sources.extend(items)
     finally:
         progress.close()
 
+    # Build a short human-readable breakdown for the picker title /
+    # the notification when everything is empty — makes it obvious
+    # WHY a show only got animekai vs (say) animepahe blocked.
+    bits = []
+    for pname in provider_cls.keys():
+        n, err, dt = provider_summary.get(pname, (0, "no-result", 0.0))
+        if err:
+            bits.append(f"{pname}:err")
+        else:
+            bits.append(f"{pname}:{n}")
+    summary_line = " ".join(bits)
+
     if not sources:
-        xbmcgui.Dialog().notification("movieRec", "No embed sources found",
-                                       xbmcgui.NOTIFICATION_WARNING, 3500)
+        # Surface the breakdown so the user can see if it's "all
+        # blocked", "title-search miss", or something specific.
+        api.notify(f"No embed sources ({summary_line})",
+                   icon=xbmcgui.NOTIFICATION_WARNING)
         return
 
     # Labels: "[provider] [server (lang)] [quality] (+subs)"
@@ -871,7 +894,7 @@ def pick_embed_source(handle, episode_id, show_id, season):
         suffix = (" (%s)" % " ".join(extras)) if extras else ""
         labels.append("[%s] %s — %s%s" % (provider, info, quality_str, suffix))
 
-    idx = xbmcgui.Dialog().select("Pick embed source", labels)
+    idx = xbmcgui.Dialog().select(f"Pick embed source — {summary_line}", labels)
     if idx < 0:
         return
     chosen = sources[idx]
