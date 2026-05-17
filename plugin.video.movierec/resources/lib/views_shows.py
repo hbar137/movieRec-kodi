@@ -952,11 +952,34 @@ def pick_embed_source(handle, episode_id, show_id, season):
         return
     chosen = sources[idx]
 
-    # Otaku scrapers pack the playable URL + headers into a single
-    # `hash` field in the form "URL|User-Agent=X&Referer=Y&Origin=Z".
-    # That's already exactly the form Kodi's stream-headers syntax
-    # accepts, so we feed it to the player as-is.
+    # Otaku scrapers return two source shapes via `type`:
+    #   'direct' — `hash` is already a playable URL (M3U8 etc.) with
+    #              "|k=v&k=v" headers appended. Pass straight to Kodi.
+    #   'embed'  — `hash` is the embed-page URL (kwik.cx, megacloud,
+    #              filemoon, etc.). We must call Otaku's
+    #              embed_extractor.load_video_from_url to extract the
+    #              real stream URL. Without this step, AnimePahe +
+    #              other embed-shape providers hand Kodi an HTML page
+    #              and playback fails immediately.
     play_url = chosen.get("hash") or chosen.get("url") or ""
+    if chosen.get("type") == "embed":
+        from .otaku_scrapers.ui import embed_extractor as otaku_embed
+        progress2 = xbmcgui.DialogProgressBG()
+        progress2.create("movieRec", "Resolving embed…")
+        try:
+            resolved = otaku_embed.load_video_from_url(play_url)
+        except Exception as e:
+            resolved = None
+            xbmc.log(f"[movierec.embed] extractor failed for {play_url}: {e}",
+                     xbmc.LOGWARNING)
+        finally:
+            progress2.close()
+        if not resolved:
+            api.notify("Could not resolve embed URL (provider needs an extractor we don't have)",
+                       icon=xbmcgui.NOTIFICATION_ERROR)
+            return
+        play_url = resolved
+
     if not play_url:
         api.notify("Empty stream URL", icon=xbmcgui.NOTIFICATION_ERROR)
         return
