@@ -787,10 +787,9 @@ def pick_embed_source(handle, episode_id, show_id, season):
     upstream Otaku via scripts/update-otaku-scrapers.py.
     """
     import concurrent.futures
-    import json as _json
     import pickle as _pickle
-    import urllib.request as _urlreq
     from .otaku_scrapers.ui import database as otaku_db
+    from .otaku_scrapers.ui import client as otaku_client
     from .otaku_scrapers.pages.animepahe import Sources as AnimePahe
     from .otaku_scrapers.pages.animekai import Sources as AnimeKai
     from .otaku_scrapers.pages.animixplay import Sources as Animixplay
@@ -822,28 +821,41 @@ def pick_embed_source(handle, episode_id, show_id, season):
     # anime-list-mini misses many titles — including "African Office
     # Worker"), query AniList GraphQL. That's the SAME source Otaku
     # uses internally for its own metadata cache during browsing.
+    # Use Otaku's vendored client.post so we inherit its TLS / UA
+    # handling instead of fighting urllib defaults.
+    anilist_err = None
     if not mal_id:
         try:
-            q = ('{"query":"query($s:String){Media(search:$s,type:ANIME)'
-                 '{idMal title{romaji english} startDate{year}}}",'
-                 '"variables":{"s":' + _json.dumps(title) + '}}')
-            req = _urlreq.Request(
+            payload = {
+                "query": ("query($s:String){Media(search:$s,type:ANIME)"
+                          "{idMal title{romaji english} startDate{year}}}"),
+                "variables": {"s": title},
+            }
+            resp = otaku_client.post(
                 "https://graphql.anilist.co",
-                data=q.encode("utf-8"),
+                json_data=payload,
                 headers={"Content-Type": "application/json",
                          "Accept": "application/json"},
+                timeout=15,
             )
-            with _urlreq.urlopen(req, timeout=10) as resp:
-                anilist = _json.loads(resp.read())
-            media = (anilist.get("data") or {}).get("Media") or {}
-            mal_id = int(media.get("idMal") or 0)
-            if not year:
-                year = str((media.get("startDate") or {}).get("year") or "")
+            if not resp:
+                anilist_err = "no response"
+            elif getattr(resp, "status_code", 0) != 200:
+                anilist_err = f"status {getattr(resp, 'status_code', '?')}"
+            else:
+                anilist = resp.json()
+                media = (anilist.get("data") or {}).get("Media") or {}
+                mal_id = int(media.get("idMal") or 0)
+                if not mal_id:
+                    anilist_err = "no idMal in response"
+                if not year:
+                    year = str((media.get("startDate") or {}).get("year") or "")
         except Exception as e:
-            xbmc.log(f"[movierec.embed] anilist lookup '{title}': {e}",
-                     xbmc.LOGWARNING)
+            anilist_err = f"{type(e).__name__}: {str(e)[:80]}"
+        xbmc.log(f"[movierec.embed] anilist '{title}' → mal_id={mal_id} err={anilist_err}",
+                 xbmc.LOGINFO)
     if not mal_id:
-        api.notify("No MAL id for this show (AniList lookup failed)",
+        api.notify(f"No MAL id ({anilist_err or 'AniList lookup failed'})",
                    icon=xbmcgui.NOTIFICATION_WARNING)
         return
 
