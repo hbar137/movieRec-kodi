@@ -852,15 +852,33 @@ def pick_embed_source(handle, episode_id, show_id, season):
     if ep.get("air_date"):
         vinfo["aired"] = ep["air_date"]
     li.setInfo("video", vinfo)
-    # Most embed M3U8s are HLS — set the right mimetype so InputStream
-    # Adaptive picks them up cleanly (auto-bitrate, subtitle tracks).
-    li.setProperty("inputstream", "inputstream.adaptive")
-    li.setProperty("inputstream.adaptive.manifest_type", "hls")
-    if headers:
-        li.setProperty("inputstream.adaptive.stream_headers", pairs)
+    # Stream-URL hygiene: tell Kodi this IS the playable item (don't
+    # do a HEAD probe first — those drop the |headers and 403 on the
+    # CDN), and hint HLS so the right demuxer is selected.
+    li.setContentLookup(False)
+    li.setMimeType("application/vnd.apple.mpegurl")
+    li.setProperty("IsPlayable", "true")
     subs = chosen.get("subs") or []
     if subs:
         li.setSubtitles([s["url"] for s in subs if s.get("url")])
+
+    # Use InputStream Adaptive when it's available (better HLS quality
+    # switching + header handling). Skip silently when not installed so
+    # we fall back to Kodi's native FFmpeg HLS demuxer with URL|headers.
+    try:
+        import inputstreamhelper
+        is_helper = inputstreamhelper.Helper("hls")
+        if is_helper.check_inputstream():
+            li.setProperty("inputstream", "inputstream.adaptive")
+            li.setProperty("inputstream.adaptive.manifest_type", "hls")
+            if headers:
+                li.setProperty("inputstream.adaptive.stream_headers", pairs)
+                li.setProperty("inputstream.adaptive.common_headers", pairs)
+                li.setProperty("inputstream.adaptive.manifest_headers", pairs)
+                # AES-128 HLS key requests need the same headers to pass.
+                li.setProperty("inputstream.adaptive.license_key", "|" + pairs + "||R{SSM}")
+    except ImportError:
+        pass
 
     # We're invoked via RunPlugin from a context menu (handle == -1), so
     # setResolvedUrl is a no-op. Start playback directly through the
