@@ -76,6 +76,7 @@ INIT_FILES = [
 # Listed only for documentation; absence from the copy loop is what
 # matters.
 OURS_DO_NOT_OVERWRITE = [
+    "__init__.py",       # malsync.get_title monkey-patch lives here
     "ui/__init__.py",
     "ui/control.py",
     "ui/database.py",
