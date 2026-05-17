@@ -77,23 +77,53 @@
                 </setting>
             </group>
             <!-- Hidden schema-only keys required by the vendored Otaku
-                 scrapers (resources/lib/otaku_scrapers/). They're hidden
-                 from the user UI but must exist so Otaku's setStringList
-                 / setBool writes don't raise TypeError. Reads of any
-                 OTHER Otaku setting key we haven't declared safely
-                 return defaults (False/0/empty), so we only declare the
-                 keys that get *written*. -->
+                 scrapers (resources/lib/otaku_scrapers/). Kodi 21+
+                 strictly validates settings READS against the schema,
+                 not just writes — undeclared keys raise TypeError. So
+                 we declare every key any vendored Otaku module reads
+                 or writes, all at level=4 (hidden) with Otaku's own
+                 defaults. Never edit these from the addon UI — the
+                 settings have no meaningful effect for our use case
+                 since we don't surface Otaku's browse/playback UI.
+
+                 The list comes from grepping the vendored otaku_scrapers
+                 tree for control.(get|set)*(...) literal-key calls. -->
             <group id="2" label="30099">
-                <setting id="embed.config" type="list[string]" label="30099">
-                    <level>4</level>
-                    <default>doodstream|filelions|filemoon|hd-1|hd-2|hd-3|iga|kwik|megacloud|megaf|moonf|mp4upload|mp4u|mycloud|noads|noadsalt|swish|streamtape|streamwish|t-cloud|vidcdn|vidhide|vidplay|vidsrc|vidstream|yourupload|zto</default>
-                    <control type="edit" format="string"/>
-                </setting>
-                <setting id="best_match" type="boolean" label="30099">
-                    <level>4</level>
-                    <default>false</default>
-                    <control type="toggle"/>
-                </setting>
+                <!-- booleans -->
+                <setting id="artwork.clearlogo" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="artwork.fanart" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="best_match" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="context.otaku.fanartselect" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="divflavors.dubonly" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="divflavors.showdub" type="boolean"><level>4</level><default>true</default><control type="toggle"/></setting>
+                <setting id="fs_enable" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="general.smart.scroll.enable" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="interface.viewidswitch" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="interface.viewtype" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="provider.animixalt" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="provider.hianimealt" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <setting id="widget.hide.nextpage" type="boolean"><level>4</level><default>false</default><control type="toggle"/></setting>
+                <!-- integers -->
+                <setting id="fs_timeout" type="integer"><level>4</level><default>20</default><control type="edit" format="integer"/></setting>
+                <setting id="general.fuzzy" type="integer"><level>4</level><default>0</default><control type="edit" format="integer"/></setting>
+                <setting id="general.source" type="integer"><level>4</level><default>0</default><control type="edit" format="integer"/></setting>
+                <setting id="interface.addon.view.id" type="integer"><level>4</level><default>50</default><control type="edit" format="integer"/></setting>
+                <setting id="interface.episode.view.id" type="integer"><level>4</level><default>50</default><control type="edit" format="integer"/></setting>
+                <setting id="interface.show.view.id" type="integer"><level>4</level><default>50</default><control type="edit" format="integer"/></setting>
+                <setting id="widgets.delay" type="integer"><level>4</level><default>0</default><control type="edit" format="integer"/></setting>
+                <!-- strings -->
+                <setting id="format" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="fs_url" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="interface.addon.view" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="interface.episode.view" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="interface.icons" type="string"><level>4</level><default>default</default><control type="edit" format="string"/></setting>
+                <setting id="interface.show.view" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="reuselanguageinvoker.status" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="version" type="string"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <!-- list[string] -->
+                <setting id="embed.config" type="list[string]"><level>4</level><default>doodstream|filelions|filemoon|hd-1|hd-2|hd-3|iga|kwik|megacloud|megaf|moonf|mp4upload|mp4u|mycloud|noads|noadsalt|swish|streamtape|streamwish|t-cloud|vidcdn|vidhide|vidplay|vidsrc|vidstream|yourupload|zto</default><control type="edit" format="string"/></setting>
+                <setting id="fanart.mal_ids" type="list[string]"><level>4</level><default></default><control type="edit" format="string"/></setting>
+                <setting id="fanart.selections" type="list[string]"><level>4</level><default></default><control type="edit" format="string"/></setting>
             </group>
         </category>
     </section>
