@@ -777,74 +777,127 @@ def pick_release(handle, episode_id, show_id, season):
 
 
 def pick_embed_source(handle, episode_id, show_id, season):
-    """Anime no-RD fallback: fetch embed sources from the server's
-    anime-resolver sidecar (vendored Otaku scrapers + JS decryption),
-    show a picker, and play the selected HLS URL directly. The URL +
-    Referer/Origin/User-Agent headers come from the sidecar; we stitch
-    them back into Kodi's `URL|k=v&k=v` stream-header form for playback.
+    """Anime no-RD fallback: run the vendored Otaku scrapers in-Kodi
+    (so they see our residential network — same property that makes
+    Otaku work in the first place), show a picker of the resulting
+    embed sources, and play the chosen one.
+
+    Everything runs locally: no server-side call, no sidecar. The
+    scrapers live at resources/lib/otaku_scrapers/ — refreshed from
+    upstream Otaku via scripts/update-otaku-scrapers.py.
     """
-    progress = xbmcgui.DialogProgressBG()
-    progress.create("movieRec", "Fetching embed sources…")
+    import concurrent.futures
+    from .otaku_scrapers.ui import control as otaku_control
+    from .otaku_scrapers.pages.animepahe import Sources as AnimePahe
+    from .otaku_scrapers.pages.animekai import Sources as AnimeKai
+    from .otaku_scrapers.pages.animixplay import Sources as Animixplay
+    from .otaku_scrapers.pages.aniwave import Sources as Aniwave
+    from .otaku_scrapers.pages.hianime import Sources as HiAnime
+
+    # Episode + show context we need to feed the scrapers. The
+    # season-detail endpoint already gives us show.mal_id + show.title.
     try:
-        data = api.get("/anime/embed-sources/%d" % episode_id, _timeout=90)
+        ep_data = api.get("/shows/%d/seasons/%d" % (show_id, season))
     except api.APIError as e:
-        progress.close()
         api.handle_error(e)
         return
-    progress.close()
-    sources = (data or {}).get("sources") or []
+    ep = next((e for e in (ep_data.get("episodes") or [])
+               if e.get("id") == episode_id), {}) or {}
+    show_meta = ep_data.get("show") or {}
+    mal_id = int(show_meta.get("mal_id") or 0)
+    title = show_meta.get("title") or ""
+    ep_num = int(ep.get("episode_number") or 0)
+    year = ""
+    air = ep.get("air_date") or ""
+    if air and len(air) >= 4:
+        year = air[:4]
+    if not title or not ep_num:
+        api.notify("Need show title + episode number", icon=xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    otaku_control.set_show_context(mal_id, title, f"{year}-01-01" if year else "")
+
+    # Providers to query — the set the user has enabled in Otaku itself.
+    # Order: AnimePahe first (confirmed-working baseline); AnimeKai +
+    # HiAnime + the rest in parallel.
+    provider_cls = {
+        "animepahe":  AnimePahe,
+        "animekai":   AnimeKai,
+        "animixplay": Animixplay,
+        "aniwave":    Aniwave,
+        "hianime":    HiAnime,
+    }
+
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Scraping embed sources…")
+
+    def _run(name_cls):
+        name, cls = name_cls
+        try:
+            out = cls().get_sources(mal_id, ep_num) or []
+        except Exception as e:
+            otaku_control.log(f"{name}: {type(e).__name__}: {e}")
+            return name, []
+        for s in out:
+            s.setdefault("provider", name)
+        return name, out
+
+    sources = []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(provider_cls)) as ex:
+            for _name, items in ex.map(_run, provider_cls.items()):
+                sources.extend(items)
+    finally:
+        progress.close()
+
     if not sources:
         xbmcgui.Dialog().notification("movieRec", "No embed sources found",
                                        xbmcgui.NOTIFICATION_WARNING, 3500)
         return
 
-    # Labels: "[provider] [Server X] [sub/dub] [quality]"
+    # Labels: "[provider] [server (lang)] [quality] (+subs)"
     labels = []
     for s in sources:
-        parts = ["[%s]" % (s.get("provider") or "?")]
-        if s.get("server"):
-            parts.append(s["server"])
-        lang = s.get("lang") or ""
-        if lang:
-            parts.append(lang.upper())
-        if s.get("quality"):
-            parts.append(s["quality"])
-        if (s.get("subs") or []):
-            parts.append("(+subs)")
-        labels.append(" ".join(parts))
+        provider = s.get("provider") or "?"
+        info_list = s.get("info") or []
+        info = info_list[0] if info_list else ""
+        quality = s.get("quality")
+        quality_str = {1: "480p", 2: "720p", 3: "1080p"}.get(quality, "?")
+        extras = []
+        if s.get("subs"):
+            extras.append("+subs")
+        if s.get("skip"):
+            extras.append("+skip")
+        suffix = (" (%s)" % " ".join(extras)) if extras else ""
+        labels.append("[%s] %s — %s%s" % (provider, info, quality_str, suffix))
 
     idx = xbmcgui.Dialog().select("Pick embed source", labels)
     if idx < 0:
         return
     chosen = sources[idx]
-    url = chosen.get("url")
-    if not url:
+
+    # Otaku scrapers pack the playable URL + headers into a single
+    # `hash` field in the form "URL|User-Agent=X&Referer=Y&Origin=Z".
+    # That's already exactly the form Kodi's stream-headers syntax
+    # accepts, so we feed it to the player as-is.
+    play_url = chosen.get("hash") or chosen.get("url") or ""
+    if not play_url:
         api.notify("Empty stream URL", icon=xbmcgui.NOTIFICATION_ERROR)
         return
 
-    # Kodi accepts custom HTTP headers on stream URLs as `|k=v&k=v...`
-    # — encoded so the player forwards them on the manifest + segment
-    # requests. Without these, the CDN returns 403/404 (embed providers
-    # check Referer/Origin/User-Agent strictly).
-    headers = chosen.get("headers") or {}
-    if headers:
-        pairs = "&".join("%s=%s" % (k, urllib.parse.quote(v, safe=""))
-                         for k, v in headers.items())
-        play_url = url + "|" + pairs
-    else:
-        play_url = url
-
-    ep_data = api.get("/shows/%d/seasons/%d" % (show_id, season))
-    ep = next((e for e in (ep_data.get("episodes") or [])
-               if e.get("id") == episode_id), {}) or {}
-    show_meta = ep_data.get("show") or {}
+    # Split headers off so we can also feed them to InputStream Adaptive
+    # (which uses its own property rather than the URL-pipe form).
+    headers_pairs = ""
+    if "|" in play_url:
+        _u, _h = play_url.split("|", 1)
+        headers_pairs = _h
 
     li = xbmcgui.ListItem(path=play_url)
     vinfo = {
         "tvshowtitle": show_meta.get("title") or "",
         "title": ep.get("name") or "",
         "season": int(ep.get("season_number") or season),
-        "episode": int(ep.get("episode_number") or 0),
+        "episode": ep_num,
         "mediatype": "episode",
     }
     if ep.get("overview"):
@@ -859,24 +912,24 @@ def pick_embed_source(handle, episode_id, show_id, season):
     li.setMimeType("application/vnd.apple.mpegurl")
     li.setProperty("IsPlayable", "true")
     subs = chosen.get("subs") or []
-    if subs:
-        li.setSubtitles([s["url"] for s in subs if s.get("url")])
+    sub_urls = [s.get("url") for s in subs if isinstance(s, dict) and s.get("url")]
+    if sub_urls:
+        li.setSubtitles(sub_urls)
 
     # Use InputStream Adaptive when it's available (better HLS quality
-    # switching + header handling). Skip silently when not installed so
-    # we fall back to Kodi's native FFmpeg HLS demuxer with URL|headers.
+    # switching + header handling on AES-128 streams). Falls back to
+    # Kodi's native FFmpeg HLS demuxer otherwise.
     try:
         import inputstreamhelper
         is_helper = inputstreamhelper.Helper("hls")
         if is_helper.check_inputstream():
             li.setProperty("inputstream", "inputstream.adaptive")
             li.setProperty("inputstream.adaptive.manifest_type", "hls")
-            if headers:
-                li.setProperty("inputstream.adaptive.stream_headers", pairs)
-                li.setProperty("inputstream.adaptive.common_headers", pairs)
-                li.setProperty("inputstream.adaptive.manifest_headers", pairs)
-                # AES-128 HLS key requests need the same headers to pass.
-                li.setProperty("inputstream.adaptive.license_key", "|" + pairs + "||R{SSM}")
+            if headers_pairs:
+                li.setProperty("inputstream.adaptive.stream_headers", headers_pairs)
+                li.setProperty("inputstream.adaptive.common_headers", headers_pairs)
+                li.setProperty("inputstream.adaptive.manifest_headers", headers_pairs)
+                li.setProperty("inputstream.adaptive.license_key", "|" + headers_pairs + "||R{SSM}")
     except ImportError:
         pass
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="plugin.video.movierec"
        name="movieRec"
-       version="0.4.38"
+       version="0.5.0"
        provider-name="hbar137">
     <requires>
         <import addon="xbmc.python" version="3.0.0"/>
@@ -14,7 +14,7 @@
         <summary lang="en_GB">movieRec — browse and play from your movieRec server</summary>
         <description lang="en_GB">Connects Kodi to a movieRec server. Browse dashboard, watchlist, shows, history, and search; play movies and episodes via Real-Debrid with subtitles and Trakt scrobbling.</description>
         <platform>all</platform>
-        <license>MIT</license>
+        <license>GPL-3.0</license>
         <source>https://github.com/hbar137/movieRec-kodi</source>
         <assets>
             <icon>icon.png</icon>
