@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-ADDON_DIRS = ["plugin.video.movierec", "repository.movierec"]
+ADDON_DIRS = ["plugin.video.movierec", "repository.movierec", "context.otaku"]
 EXCLUDE_FILE_SUFFIXES = (".pyc",)
 EXCLUDE_DIR_NAMES = {"__pycache__", ".git"}
 

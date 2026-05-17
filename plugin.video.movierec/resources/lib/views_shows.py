@@ -787,7 +787,10 @@ def pick_embed_source(handle, episode_id, show_id, season):
     upstream Otaku via scripts/update-otaku-scrapers.py.
     """
     import concurrent.futures
-    from .otaku_scrapers.ui import control as otaku_control
+    import json as _json
+    import pickle as _pickle
+    import urllib.request as _urlreq
+    from .otaku_scrapers.ui import database as otaku_db
     from .otaku_scrapers.pages.animepahe import Sources as AnimePahe
     from .otaku_scrapers.pages.animekai import Sources as AnimeKai
     from .otaku_scrapers.pages.animixplay import Sources as Animixplay
@@ -815,7 +818,45 @@ def pick_embed_source(handle, episode_id, show_id, season):
         api.notify("Need show title + episode number", icon=xbmcgui.NOTIFICATION_ERROR)
         return
 
-    otaku_control.set_show_context(mal_id, title, f"{year}-01-01" if year else "")
+    # If our DB doesn't have a MAL id for this show (Fribb's
+    # anime-list-mini misses many titles — including "African Office
+    # Worker"), query AniList GraphQL. That's the SAME source Otaku
+    # uses internally for its own metadata cache during browsing.
+    if not mal_id:
+        try:
+            q = ('{"query":"query($s:String){Media(search:$s,type:ANIME)'
+                 '{idMal title{romaji english} startDate{year}}}",'
+                 '"variables":{"s":' + _json.dumps(title) + '}}')
+            req = _urlreq.Request(
+                "https://graphql.anilist.co",
+                data=q.encode("utf-8"),
+                headers={"Content-Type": "application/json",
+                         "Accept": "application/json"},
+            )
+            with _urlreq.urlopen(req, timeout=10) as resp:
+                anilist = _json.loads(resp.read())
+            media = (anilist.get("data") or {}).get("Media") or {}
+            mal_id = int(media.get("idMal") or 0)
+            if not year:
+                year = str((media.get("startDate") or {}).get("year") or "")
+        except Exception as e:
+            xbmc.log(f"[movierec.embed] anilist lookup '{title}': {e}",
+                     xbmc.LOGWARNING)
+    if not mal_id:
+        api.notify("No MAL id for this show (AniList lookup failed)",
+                   icon=xbmcgui.NOTIFICATION_WARNING)
+        return
+
+    # Otaku's scrapers read the show title from its database via
+    # database.get_show(mal_id) → kodi_meta['name']. In Otaku's normal
+    # flow this is populated during browse. We're skipping browse, so
+    # seed it directly the same way Otaku itself would.
+    start_date = f"{year}-01-01" if year else ""
+    kodi_meta = _pickle.dumps({"name": title, "start_date": start_date})
+    try:
+        otaku_db.update_show(mal_id, kodi_meta, "")
+    except Exception as e:
+        xbmc.log(f"[movierec.embed] otaku db.update_show: {e}", xbmc.LOGWARNING)
 
     # Providers to query — the set the user has enabled in Otaku itself.
     # Order: AnimePahe first (confirmed-working baseline); AnimeKai +
@@ -839,11 +880,11 @@ def pick_embed_source(handle, episode_id, show_id, season):
         try:
             out = cls().get_sources(mal_id, ep_num) or []
             dt = _time.monotonic() - t0
-            otaku_control.log(f"[embed] {name} → {len(out)} sources in {dt:.1f}s")
+            xbmc.log(f"[movierec.embed] {name} → {len(out)} sources in {dt:.1f}s", xbmc.LOGINFO)
             return name, out, None, dt
         except Exception as e:
             dt = _time.monotonic() - t0
-            otaku_control.log(f"[embed] {name} → ERROR {type(e).__name__}: {e} in {dt:.1f}s")
+            xbmc.log(f"[movierec.embed] {name} → ERROR {type(e).__name__}: {e} in {dt:.1f}s", xbmc.LOGWARNING)
             return name, [], f"{type(e).__name__}: {str(e)[:60]}", dt
 
     sources = []
