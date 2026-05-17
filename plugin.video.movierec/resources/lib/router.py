@@ -84,6 +84,11 @@ def dispatch(argv):
                                      int(params["episode_id"]),
                                      int(params["show_id"]),
                                      int(params["season"]))
+        elif action == "pick_embed_source":
+            views_shows.pick_embed_source(handle,
+                                          int(params["episode_id"]),
+                                          int(params["show_id"]),
+                                          int(params["season"]))
         elif action == "search_shows":
             views_shows.search_shows(handle)
         elif action == "search_shows_new":

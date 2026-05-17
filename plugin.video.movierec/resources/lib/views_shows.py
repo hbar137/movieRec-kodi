@@ -322,6 +322,8 @@ def episode_detail(handle, episode_id, show_id, season):
     links_map = data.get("links") or {}
     ep = episodes.get(episode_id) or {}
     links = links_map.get(str(episode_id)) or links_map.get(episode_id) or []
+    show_meta = data.get("show") or {}
+    is_anime = bool(show_meta.get("is_anime"))
 
     xbmcplugin.setPluginCategory(handle, "S%02dE%02d %s" %
                                  (ep.get("season_number") or 0,
@@ -334,6 +336,13 @@ def episode_detail(handle, episode_id, show_id, season):
         li.setProperty("SpecialSort", "top")
         url = _url(action="resolve_episode", episode_id=episode_id, show_id=show_id, season=season)
         xbmcplugin.addDirectoryItem(handle, url, li, isFolder=True)
+        # Anime-only: also offer the embed-sources fallback for shows
+        # where RD has nothing cached (e.g. "African Office Worker").
+        # Backend hits the anime-resolver sidecar which vendors Otaku.
+        if is_anime and show_meta.get("mal_id"):
+            li = xbmcgui.ListItem(label="[B]» Pick embed source (no-RD fallback)[/B]")
+            url = _url(action="pick_embed_source", episode_id=episode_id, show_id=show_id, season=season)
+            xbmcplugin.addDirectoryItem(handle, url, li, isFolder=False)
         xbmcplugin.endOfDirectory(handle)
         return
 
@@ -738,3 +747,92 @@ def pick_release(handle, episode_id, show_id, season):
     xbmc.executebuiltin("PlayMedia(%s)" % _url(
         action="play_episode", link_id=link["id"],
         episode_id=episode_id, show_id=show_id))
+
+
+def pick_embed_source(handle, episode_id, show_id, season):
+    """Anime no-RD fallback: fetch embed sources from the server's
+    anime-resolver sidecar (vendored Otaku scrapers + JS decryption),
+    show a picker, and play the selected HLS URL directly. The URL +
+    Referer/Origin/User-Agent headers come from the sidecar; we stitch
+    them back into Kodi's `URL|k=v&k=v` stream-header form for playback.
+    """
+    progress = xbmcgui.DialogProgressBG()
+    progress.create("movieRec", "Fetching embed sources…")
+    try:
+        data = api.get("/anime/embed-sources/%d" % episode_id, _timeout=90)
+    except api.APIError as e:
+        progress.close()
+        api.handle_error(e)
+        return
+    progress.close()
+    sources = (data or {}).get("sources") or []
+    if not sources:
+        xbmcgui.Dialog().notification("movieRec", "No embed sources found",
+                                       xbmcgui.NOTIFICATION_WARNING, 3500)
+        return
+
+    # Labels: "[provider] [Server X] [sub/dub] [quality]"
+    labels = []
+    for s in sources:
+        parts = ["[%s]" % (s.get("provider") or "?")]
+        if s.get("server"):
+            parts.append(s["server"])
+        lang = s.get("lang") or ""
+        if lang:
+            parts.append(lang.upper())
+        if s.get("quality"):
+            parts.append(s["quality"])
+        if (s.get("subs") or []):
+            parts.append("(+subs)")
+        labels.append(" ".join(parts))
+
+    idx = xbmcgui.Dialog().select("Pick embed source", labels)
+    if idx < 0:
+        return
+    chosen = sources[idx]
+    url = chosen.get("url")
+    if not url:
+        api.notify("Empty stream URL", icon=xbmcgui.NOTIFICATION_ERROR)
+        return
+
+    # Kodi accepts custom HTTP headers on stream URLs as `|k=v&k=v...`
+    # — encoded so the player forwards them on the manifest + segment
+    # requests. Without these, the CDN returns 403/404 (embed providers
+    # check Referer/Origin/User-Agent strictly).
+    headers = chosen.get("headers") or {}
+    if headers:
+        pairs = "&".join("%s=%s" % (k, urllib.parse.quote(v, safe=""))
+                         for k, v in headers.items())
+        play_url = url + "|" + pairs
+    else:
+        play_url = url
+
+    ep_data = api.get("/shows/%d/seasons/%d" % (show_id, season))
+    ep = next((e for e in (ep_data.get("episodes") or [])
+               if e.get("id") == episode_id), {}) or {}
+    show_meta = ep_data.get("show") or {}
+
+    li = xbmcgui.ListItem(path=play_url)
+    vinfo = {
+        "tvshowtitle": show_meta.get("title") or "",
+        "title": ep.get("name") or "",
+        "season": int(ep.get("season_number") or season),
+        "episode": int(ep.get("episode_number") or 0),
+        "mediatype": "episode",
+    }
+    if ep.get("overview"):
+        vinfo["plot"] = ep["overview"]
+    if ep.get("air_date"):
+        vinfo["aired"] = ep["air_date"]
+    li.setInfo("video", vinfo)
+    # Most embed M3U8s are HLS — set the right mimetype so InputStream
+    # Adaptive picks them up cleanly (auto-bitrate, subtitle tracks).
+    li.setProperty("inputstream", "inputstream.adaptive")
+    li.setProperty("inputstream.adaptive.manifest_type", "hls")
+    if headers:
+        li.setProperty("inputstream.adaptive.stream_headers", pairs)
+    subs = chosen.get("subs") or []
+    if subs:
+        li.setSubtitles([s["url"] for s in subs if s.get("url")])
+
+    xbmcplugin.setResolvedUrl(handle, True, li)
